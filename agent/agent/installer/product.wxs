@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product Id="*" Name="Kinetix Agent" Language="1033" Version="1.0.0.0" Manufacturer="Kinetix" UpgradeCode="7bd4d180-8742-4b71-9c6a-466d18387063">
+        <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+
+        <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <MediaTemplate EmbedCab="yes" />
+
+        <Feature Id="ProductFeature" Title="KinetixAgentInstaller" Level="1">
+            <ComponentGroupRef Id="ProductComponents" />
+        </Feature>
+    </Product>
+
+    <Fragment>
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFilesFolder">
+                <Directory Id="INSTALLFOLDER" Name="KinetixAgent">
+                    <Directory Id="LOGDIR" Name="logs" />
+                    <Directory Id="TEMPDIR" Name="temp" />
+                </Directory>
+            </Directory>
+        </Directory>
+    </Fragment>
+
+    <Fragment>
+        <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+            <!-- Main Executable and Service -->
+            <Component Id="KinetixAgentExecutable" Guid="a5d2e3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b">
+                <File Id="KinetixAgentEXE" Source="..\dist\kinetix_agent.exe" KeyPath="yes" />
+                
+                <!-- Install as Windows Service -->
+                <ServiceInstall Id="ServiceInstaller"
+                                Type="ownProcess"
+                                Name="KinetixAgent"
+                                DisplayName="Kinetix Endpoint Agent"
+                                Description="Ensures secure update delivery and inventory reporting for Kinetix."
+                                Start="auto"
+                                Account="LocalSystem"
+                                ErrorControl="normal" />
+                
+                <ServiceControl Id="StartService" Start="install" Stop="both" Remove="uninstall" Name="KinetixAgent" Wait="yes" />
+            </Component>
+
+            <!-- Configuration File -->
+            <Component Id="AgentINI" Guid="b6e7f8a9-c0d1-42e3-94b5-c6d7e8f9a0b1">
+                <File Id="ConfigFile" Source="..\agent.ini" KeyPath="yes" />
+            </Component>
+
+            <!-- Public Key for Verification -->
+            <Component Id="PublicKey" Guid="c7d8e9f0-a1b2-43e4-a5b6-c7d8e9f0a1b2">
+                <File Id="PubKeyFile" Source="..\public_key.pem" KeyPath="yes" />
+            </Component>
+            
+            <!-- Add references to the directory components -->
+            <ComponentRef Id="LogsDirComp" />
+            <ComponentRef Id="TempDirComp" />
+        </ComponentGroup>
+
+        <DirectoryRef Id="LOGDIR">
+            <Component Id="LogsDirComp" Guid="d8e9f0a1-b2c3-44e5-b6c7-d8e9f0a1b2c3">
+                <CreateFolder />
+            </Component>
+        </DirectoryRef>
+
+        <DirectoryRef Id="TEMPDIR">
+            <Component Id="TempDirComp" Guid="e9f0a1b2-c4d5-46e7-8a9b-0c1d2e3f4a5b">
+                <CreateFolder />
+            </Component>
+        </DirectoryRef>
+    </Fragment>
+</Wix>

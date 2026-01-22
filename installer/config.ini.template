@@ -1,0 +1,71 @@
+[server]
+# Server configuration
+host = 0.0.0.0
+port = 8000
+debug = false
+workers = 4
+
+[database]
+# Database configuration
+# For SQLite (default):
+engine = sqlite3
+name = db.sqlite3
+
+# For PostgreSQL (uncomment and configure):
+# engine = postgresql
+# name = kinetix
+# user = ccadmin
+# password = your_password
+# host = localhost
+# port = 5432
+
+[security]
+# Security keys (auto-generated on first run)
+secret_key = 
+encryption_key = 
+
+# HTTPS configuration
+ssl_enabled = true
+ssl_cert = ssl/server.crt
+ssl_key = ssl/server.key
+
+# Allowed hosts (comma-separated)
+allowed_hosts = localhost,127.0.0.1
+
+[redis]
+# Redis configuration for Celery
+url = redis://localhost:6379/0
+
+[api]
+# External API keys
+virustotal_api_key = 
+
+[clamav]
+# ClamAV configuration (optional)
+enabled = false
+host = localhost
+port = 3310
+
+[email]
+# Email configuration for alerts (optional)
+smtp_host = 
+smtp_port = 587
+smtp_username = 
+smtp_password = 
+alert_email = 
+
+[policies]
+# Retention policies (days)
+update_retention_days = 90
+audit_log_retention_days = 365
+
+# Device heartbeat timeout (seconds)
+device_heartbeat_timeout = 300
+
+# File upload limits (MB)
+max_upload_size_mb = 500
+
+[logging]
+# Logging configuration
+log_level = INFO
+log_dir = logs

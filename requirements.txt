@@ -1,0 +1,77 @@
+# Core Django
+Django==5.0.1
+djangorestframework==3.15.0
+djangorestframework-simplejwt==5.5.1
+
+# Database
+psycopg2-binary==2.9.9
+dj-database-url==2.2.0
+
+# Task Queue
+celery==5.3.6
+redis==5.0.1
+django-celery-beat==2.6.0
+django-celery-results==2.6.0
+
+# Security
+cryptography==42.0.0
+PyJWT==2.8.0
+django-ratelimit==4.1.0
+django-csp==3.8
+bleach==6.1.0
+python-decouple==3.8
+
+# Validation
+cerberus==1.3.5
+jsonschema==4.20.0
+
+# File Handling
+python-magic-bin==0.4.14  # Windows binary included
+Pillow==10.2.0
+
+# HTTP & API
+requests==2.31.0
+urllib3==2.1.0
+
+# Malware Scanning
+pyclamd==0.4.0  # Optional: ClamAV integration
+
+# WSGI/ASGI Servers
+gunicorn==21.2.0
+daphne==4.0.0
+waitress==3.0.0
+whitenoise==6.6.0
+
+# Monitoring & Logging
+sentry-sdk==1.40.0
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2024.1
+openpyxl==3.1.2  # Excel export
+reportlab==4.0.9  # PDF generation
+qrcode==7.4.2  # QR codes for device pairing
+
+# Development
+django-debug-toolbar==4.2.0
+django-extensions==3.2.3
+ipython==8.20.0
+
+# Testing
+pytest==7.4.4
+pytest-django==4.7.0
+pytest-cov==4.1.0
+factory-boy==3.3.0
+faker==22.0.0
+
+# Code Quality
+flake8==7.0.0
+black==24.1.1
+isort==5.13.2
+mypy==1.8.0
+django-stubs==4.2.7
+bandit==1.7.6
+
+# Packaging (for MSI build)
+pyinstaller==6.3.0
+pyinstaller-hooks-contrib==2024.0

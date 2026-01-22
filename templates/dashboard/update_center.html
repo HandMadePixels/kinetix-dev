@@ -1,0 +1,393 @@
+{% extends 'base.html' %}
+
+{% block title %}Update Center | Kinetix{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <h1>Software Deployment Center</h1>
+        <p class="text-muted">Deploy new software, updates, and firmware to your managed fleet.</p>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Push Update Form -->
+    <div class="col-md-5">
+        <!-- New Update Upload Card (Simplified) -->
+        <div class="card shadow-sm mb-4 border-primary">
+            <div class="card-header bg-primary text-white fw-bold d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-cloud-upload"></i> Upload New Update</span>
+                <button class="btn btn-sm btn-light" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#uploadCollapse">
+                    <i class="bi bi-chevron-down"></i>
+                </button>
+            </div>
+            <div id="uploadCollapse" class="collapse show">
+                <div class="card-body">
+                    <form id="uploadUpdateForm" enctype="multipart/form-data">
+                        {% csrf_token %}
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">Software/Update Name</label>
+                            <input type="text" name="name" class="form-control form-control-sm"
+                                placeholder="e.g. TwinScope" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">Installation File (MSI/EXE)</label>
+                            <input type="file" name="file" class="form-control form-control-sm" required>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">Version</label>
+                                <input type="text" name="version" class="form-control form-control-sm"
+                                    placeholder="1.0.0" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">Description</label>
+                                <input type="text" name="description" class="form-control form-control-sm"
+                                    placeholder="Internal fix" required>
+                            </div>
+                        </div>
+
+                        <!-- Advanced Options (Hash/Signature) -->
+                        <div class="mb-3">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none small" type="button"
+                                data-bs-toggle="collapse" data-bs-target="#advancedUploadOptions">
+                                <i class="bi bi-gear"></i> Custom Hash/Signature (Optional)
+                            </button>
+                            <div class="collapse" id="advancedUploadOptions">
+                                <div class="mt-2 p-2 border rounded bg-light">
+                                    <div class="mb-2">
+                                        <label class="form-label small fw-bold">SHA256 Hash</label>
+                                        <input type="text" name="sha256_hash" class="form-control form-control-sm"
+                                            placeholder="Optional hex hash">
+                                    </div>
+                                    <div class="mb-0">
+                                        <label class="form-label small fw-bold">RSA Signature (Base64)</label>
+                                        <textarea name="signature" class="form-control form-control-sm" rows="2"
+                                            placeholder="Optional base64 signature"></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-upload"></i> Upload & Process
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-dark text-white fw-bold">
+                <i class="bi bi-send"></i> Launch Deployment
+            </div>
+            <div class="card-body">
+                <form id="pushUpdateForm">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">1. Select Update</label>
+                        <select name="update_id" class="form-select" required>
+                            <option value="">-- Choose an Update --</option>
+                            {% for update in available_updates %}
+                            <option value="{{ update.id }}">
+                                {{ update.name }} (v{{ update.version }})
+                                {% if update.scan_status == 'pending' %}[Scanning...]{% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Verified (clean) or pending updates are shown.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">2. Target Devices</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="target_type" id="targetAll" value="all"
+                                checked>
+                            <label class="form-check-label" for="targetAll">All Devices ({{ device_count }})</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="target_type" id="targetSpecific"
+                                value="specific">
+                            <label class="form-check-label" for="targetSpecific">Specific Devices</label>
+                        </div>
+
+                        <div id="specificDevicesList" class="mt-2 p-2 border rounded bg-light"
+                            style="display:none; max-height: 200px; overflow-y: auto;">
+                            {% for device in devices %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="target_hostnames"
+                                    value="{{ device.hostname }}" id="dev_{{ device.id }}">
+                                <label class="form-check-label" for="dev_{{ device.id }}">{{ device.hostname }} ({{
+                                    device.ip_address }})</label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">3. Scheduling</label>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="pushImmediately" name="push_immediately"
+                                checked>
+                            <label class="form-check-label fw-bold text-danger" for="pushImmediately">Push
+                                Immediately</label>
+                        </div>
+                        <div id="scheduleInput" class="mt-2" style="display:none;">
+                            <label class="form-label small text-muted">Scheduled Time (UTC)</label>
+                            <input type="datetime-local" name="schedule" class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="bi bi-send"></i> Launch Deployment
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Push Status -->
+    <div class="col-md-7">
+        <div class="card shadow-sm">
+            <div class="card-header bg-transparent fw-bold d-flex justify-content-between align-items-center">
+                <span>Recent Deployments</span>
+                <button class="btn btn-sm btn-outline-primary" type="button" onclick="location.reload()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-3">Update</th>
+                                <th>Device</th>
+                                <th>Status</th>
+                                <th class="text-end pe-3">Pushed At</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for push in recent_pushes %}
+                            <tr id="push-{{ push.id }}" class="push-row" data-id="{{ push.id }}"
+                                data-status="{{ push.status }}">
+                                <td class="ps-3">
+                                    <div class="fw-bold">{{ push.update.name }}</div>
+                                    <small class="text-muted">v{{ push.update.version }} ({{ push.update.filename
+                                        }})</small>
+                                </td>
+                                <td>{{ push.device.id }}</td>
+                                <td class="status-cell">
+                                    {% if push.status == 'completed' %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>
+                                    {% elif push.status == 'failed' %}
+                                    <span class="badge bg-danger" title="{{ push.error_message }}"><i
+                                            class="bi bi-exclamation-triangle"></i> Failed</span>
+                                    {% elif push.status == 'in_progress' %}
+                                    <span class="badge bg-primary"><span class="spinner-border spinner-border-sm"
+                                            role="status"></span> In Progress</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark"><i class="bi bi-clock"></i> Pending</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end pe-3 time-cell">
+                                    {{ push.pushed_at|default:push.scheduled_at|timesince }} ago
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr id="noDeployEntries">
+                                <td colspan="4" class="text-center py-4 text-muted">No recent deployments.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function () {
+        let pollingInterval = null;
+
+        // Toggle specific devices list
+        $('input[name="target_type"]').change(function () {
+            if ($(this).val() === 'specific') {
+                $('#specificDevicesList').slideDown();
+            } else {
+                $('#specificDevicesList').slideUp();
+            }
+        });
+
+        // Toggle schedule input
+        $('#pushImmediately').change(function () {
+            if ($(this).is(':checked')) {
+                $('#scheduleInput').slideUp();
+            } else {
+                $('#scheduleInput').slideDown();
+            }
+        });
+
+        function updatePushStatus() {
+            const activePushIds = [];
+            $('.push-row').each(function () {
+                const status = $(this).data('status');
+                if (status === 'pending' || status === 'in_progress') {
+                    activePushIds.push($(this).data('id'));
+                }
+            });
+
+            if (activePushIds.length === 0) {
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+                return;
+            }
+
+            const queryParams = activePushIds.map(id => `ids=${id}`).join('&');
+            $.ajax({
+                url: `/api/v1/push-status/?${queryParams}`,
+                type: 'GET',
+                success: function (response) {
+                    response.forEach(push => {
+                        const $row = $(`#push-${push.id}`);
+                        if ($row.length) {
+                            $row.data('status', push.status);
+                            let statusHtml = '';
+                            if (push.status === 'completed') {
+                                statusHtml = '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>';
+                            } else if (push.status === 'failed') {
+                                statusHtml = `<span class="badge bg-danger" title="${push.error_message}"><i class="bi bi-exclamation-triangle"></i> Failed</span>`;
+                            } else if (push.status === 'in_progress') {
+                                statusHtml = '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm" role="status"></span> In Progress</span>';
+                            } else {
+                                statusHtml = '<span class="badge bg-warning text-dark"><i class="bi bi-clock"></i> Pending</span>';
+                            }
+                            $row.find('.status-cell').html(statusHtml);
+                        }
+                    });
+                }
+            });
+        }
+
+        // Start polling if there are active pushes
+        if ($('.push-row[data-status="pending"], .push-row[data-status="in_progress"]').length > 0) {
+            pollingInterval = setInterval(updatePushStatus, 5000);
+        }
+
+        // Handle form submission
+        $('#pushUpdateForm').submit(function (e) {
+            e.preventDefault();
+
+            const formData = new FormData(this);
+            const targetType = formData.get('target_type');
+            const pushImmediately = $('#pushImmediately').is(':checked');
+            const schedule = formData.get('schedule');
+
+            const data = {
+                update_id: formData.get('update_id'),
+                push_to_all: targetType === 'all',
+                target_hostnames: [],
+                schedule: pushImmediately ? null : (schedule || null)
+            };
+
+            if (!data.push_to_all) {
+                $("input[name='target_hostnames']:checked").each(function () {
+                    data.target_hostnames.push($(this).val());
+                });
+
+                if (data.target_hostnames.length === 0) {
+                    alert('Please select at least one target device.');
+                    return;
+                }
+            }
+
+            if (!pushImmediately && !schedule) {
+                alert('Please select a scheduled time for the deployment.');
+                return;
+            }
+
+            // Disable button during submission
+            const $submitBtn = $(this).find('button[type="submit"]');
+            const originalBtnHtml = $submitBtn.html();
+            $submitBtn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Queuing...');
+
+            $.ajax({
+                url: '/api/v1/push-update/',
+                type: 'POST',
+                data: JSON.stringify(data),
+                contentType: 'application/json',
+                headers: {
+                    'X-CSRFToken': formData.get('csrfmiddlewaretoken')
+                },
+                success: function (response) {
+                    location.reload();
+                },
+                error: function (xhr) {
+                    $submitBtn.prop('disabled', false).html(originalBtnHtml);
+
+                    let errorMsg = 'Unknown error';
+                    if (xhr.responseJSON) {
+                        if (typeof xhr.responseJSON.error === 'string') {
+                            errorMsg = xhr.responseJSON.error;
+                        } else if (typeof xhr.responseJSON.error === 'object') {
+                            const firstKey = Object.keys(xhr.responseJSON.error)[0];
+                            const firstVal = xhr.responseJSON.error[firstKey];
+                            errorMsg = Array.isArray(firstVal) ? firstVal[0] : JSON.stringify(firstVal);
+                            if (firstKey !== 'non_field_errors') {
+                                errorMsg = firstKey + ': ' + errorMsg;
+                            }
+                        }
+                    }
+                    alert('Error: ' + errorMsg);
+                }
+            });
+        });
+
+        // Handle upload form submission
+        $('#uploadUpdateForm').submit(function (e) {
+            e.preventDefault();
+
+            const formData = new FormData(this);
+            const $submitBtn = $(this).find('button[type="submit"]');
+            const originalBtnHtml = $submitBtn.html();
+
+            $submitBtn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Uploading...');
+
+            $.ajax({
+                url: '/api/v1/updates/',
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                headers: {
+                    'X-CSRFToken': formData.get('csrfmiddlewaretoken')
+                },
+                success: function (response) {
+                    $('#uploadUpdateModal').modal('hide');
+                    alert('Update uploaded successfully! It is now being processed and scanned.');
+                    location.reload();
+                },
+                error: function (xhr) {
+                    $submitBtn.prop('disabled', false).html(originalBtnHtml);
+                    let errorMsg = 'Upload failed';
+                    if (xhr.responseJSON) {
+                        const errors = xhr.responseJSON;
+                        const firstKey = Object.keys(errors)[0];
+                        errorMsg = firstKey + ': ' + (Array.isArray(errors[firstKey]) ? errors[firstKey][0] : JSON.stringify(errors[firstKey]));
+                    }
+                    alert('Error: ' + errorMsg);
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

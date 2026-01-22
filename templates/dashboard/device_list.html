@@ -1,0 +1,170 @@
+{% extends 'base.html' %}
+
+{% block title %}Devices | Kinetix{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Managed Devices</h1>
+    <div class="d-flex gap-2">
+        <form method="get" class="d-flex">
+            <input type="text" name="q" class="form-control me-2" placeholder="Search devices..." value="{{ query }}">
+            <button type="submit" class="btn btn-primary me-2">Search</button>
+            {% if query %}
+            <a href="{% url 'dashboard:device_list' %}" class="btn btn-outline-secondary">Clear</a>
+            {% endif %}
+        </form>
+        <span class="badge bg-primary d-flex align-items-center px-3">{{ devices.count }} Total</span>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table id="devicesTable" class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-4">Hostname</th>
+                        <th>Status</th>
+                        <th>Connectivity</th>
+                        <th>IP Address</th>
+                        <th>OS Version</th>
+                        <th>Last Seen</th>
+                        <th class="text-end pe-4">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for device in devices %}
+                    <tr>
+                        <td class="ps-4 fw-bold text-primary">{{ device.hostname }}</td>
+                        <td>
+                            {% if device.status == 'active' %}
+                            <span class="badge bg-success">Active</span>
+                            {% elif device.status == 'inactive' %}
+                            <span class="badge bg-secondary">Inactive</span>
+                            {% else %}
+                            <span class="badge bg-danger">{{ device.status|upper }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if device.is_online %}
+                            <span class="badge rounded-pill bg-success"><i class="bi bi-circle-fill small me-1"></i>
+                                Online</span>
+                            {% else %}
+                            <span class="badge rounded-pill bg-danger"><i class="bi bi-circle-fill small me-1"></i>
+                                Offline</span>
+                            {% endif %}
+                        </td>
+                        <td><code>{{ device.ip_address }}</code></td>
+                        <td>{{ device.os_version }}</td>
+                        <td>{{ device.last_seen|timesince }} ago</td>
+                        <td class="text-end pe-4">
+                            <div class="btn-group">
+                                <a href="{% url 'dashboard:device_inventory' device.pk %}"
+                                    class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-list-check"></i> View Inventory
+                                </a>
+                                <button type="button" class="btn btn-sm btn-outline-success refresh-device"
+                                    data-id="{{ device.id }}" title="Request Refresh">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger delete-device"
+                                    data-id="{{ device.id }}" data-hostname="{{ device.hostname }}"
+                                    title="Delete Device">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-5 text-muted">No devices registered yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function () {
+        $('#devicesTable').DataTable({
+            "pageLength": 25,
+            "order": [[4, "desc"]], // Sort by Last Seen by default
+            "language": {
+                "search": "Filter devices:"
+            }
+        });
+
+        // Handle refresh button (using event delegation for DataTables compatibility)
+        $(document).on('click', '.refresh-device', function () {
+            const btn = $(this);
+            const deviceId = btn.data('id');
+            const icon = btn.find('i');
+
+            icon.addClass('bi-spin');
+            btn.prop('disabled', true);
+
+            $.ajax({
+                url: `/api/v1/devices/${deviceId}/request_refresh/`,
+                type: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                success: function () {
+                    alert('Refresh requested! The device will update its inventory on the next poll.');
+                    location.reload();
+                },
+                error: function () {
+                    alert('Failed to request refresh.');
+                    icon.removeClass('bi-spin');
+                    btn.prop('disabled', false);
+                }
+            });
+        });
+
+        // Handle delete button (using event delegation for DataTables compatibility)
+        $(document).on('click', '.delete-device', function () {
+            const btn = $(this);
+            const deviceId = btn.data('id');
+            const hostname = btn.data('hostname');
+
+            if (confirm(`Are you sure you want to permanently delete device "${hostname}"? This will remove all its inventory history.`)) {
+                btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>');
+                $.ajax({
+                    url: `/api/v1/devices/${deviceId}/`,
+                    type: 'DELETE',
+                    headers: {
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    success: function () {
+                        location.reload();
+                    },
+                    error: function () {
+                        alert('Failed to delete device.');
+                        btn.prop('disabled', false).html('<i class="bi bi-trash"></i>');
+                    }
+                });
+            }
+        });
+    });
+</script>
+<style>
+    .bi-spin {
+        animation: spin 1s infinite linear;
+        display: inline-block;
+    }
+
+    @keyframes spin {
+        from {
+            transform: rotate(0deg);
+        }
+
+        to {
+            transform: rotate(360deg);
+        }
+    }
+</style>
+{% endblock %}

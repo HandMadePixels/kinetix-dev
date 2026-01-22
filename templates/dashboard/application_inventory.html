@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+
+{% block title %}Application Inventory | Kinetix{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Global Application Inventory</h1>
+    <div class="d-flex gap-2">
+        <form method="get" class="d-flex">
+            <input type="text" name="q" class="form-control me-2" placeholder="Filter apps..." value="{{ query }}">
+            <button type="submit" class="btn btn-primary me-2">Filter</button>
+            {% if query %}
+            <a href="{% url 'dashboard:application_inventory' %}" class="btn btn-outline-secondary">Clear</a>
+            {% endif %}
+        </form>
+        <span class="badge bg-primary d-flex align-items-center px-3">{{ applications|length }} Unique</span>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table id="globalAppsTable" class="table table-hover table-striped mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-4">Application Name</th>
+                        <th>Version</th>
+                        <th>Publisher</th>
+                        <th class="text-center">Devices</th>
+                        <th class="text-end pe-4">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for app in applications %}
+                    <tr>
+                        <td class="ps-4 fw-bold text-primary">{{ app.display_name }}</td>
+                        <td>{{ app.version|default:"-" }}</td>
+                        <td>{{ app.publisher|default:"-" }}</td>
+                        <td class="text-center">
+                            <span class="badge bg-info text-dark rounded-pill">{{ app.device_count }}</span>
+                        </td>
+                        <td class="text-end pe-4">
+                            <a href="{% url 'dashboard:device_list' %}?q={{ app.display_name|urlencode }}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-laptop"></i> View Devices
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center py-5 text-muted">No application data collected yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        $('#globalAppsTable').DataTable({
+            "pageLength": 50,
+            "order": [[ 0, "asc" ]],
+            "language": {
+                "search": "Search applications/versions:"
+            }
+        });
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,238 @@
+{% extends 'base.html' %}
+
+{% block title %}Inventory: {{ device.hostname }} | Kinetix{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'dashboard:device_list' %}">Devices</a></li>
+        <li class="breadcrumb-item active" aria-current="page">{{ device.hostname }} Inventory</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-end mb-4">
+    <div>
+        <h1 class="mb-0">{{ device.hostname }}</h1>
+        <p class="text-muted mb-0">
+            Last collected:
+            {% if snapshot %}
+            <strong>{{ snapshot.collected_at|date:"Y-m-d H:i" }}</strong>
+            {% else %}
+            <span class="text-danger">Never</span>
+            {% endif %}
+        </p>
+    </div>
+    <div class="text-end">
+        <button id="refreshDeviceData" class="btn btn-outline-success me-2" data-id="{{ device.id }}">
+            <i class="bi bi-arrow-clockwise"></i> Refresh Data
+        </button>
+        <button id="deleteDevice" class="btn btn-outline-danger me-2" data-id="{{ device.id }}"
+            data-hostname="{{ device.hostname }}">
+            <i class="bi bi-trash"></i> Delete Device
+        </button>
+        <span class="badge bg-info p-2">OS: {{ device.os_version }}</span>
+        <span class="badge bg-dark p-2">IP: {{ device.ip_address }}</span>
+    </div>
+</div>
+
+{% if not snapshot %}
+<div class="alert alert-warning shadow-sm border-0">
+    <h4 class="alert-heading">No Inventory Data Found</h4>
+    <p>The agent has not submitted any inventory data for this device yet.</p>
+    <hr>
+    <p class="mb-0">To force an update, run <code>agent.exe inventory</code> on the client machine.</p>
+</div>
+{% else %}
+
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="input-group shadow-sm">
+            <span class="input-group-text bg-white border-end-0"><i class="bi bi-search"></i></span>
+            <input type="text" id="inventorySearch" class="form-control border-start-0 border-end-0"
+                placeholder="Search applications or services...">
+            <button class="btn btn-outline-secondary border-start-0" type="button" id="clearSearch">Clear</button>
+        </div>
+    </div>
+</div>
+
+<ul class="nav nav-tabs mb-4" id="inventoryTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="apps-tab" data-bs-toggle="tab" data-bs-target="#apps" type="button"
+            role="tab">
+            Installed Applications ({{ applications.count }})
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="services-tab" data-bs-toggle="tab" data-bs-target="#services" type="button"
+            role="tab">
+            Windows Services ({{ services.count }})
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="inventoryTabsContent">
+    <!-- Applications Tab -->
+    <div class="tab-pane fade show active" id="apps" role="tabpanel">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table id="appsTable" class="table table-hover table-striped mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-4">Application Name</th>
+                                <th>Version</th>
+                                <th>Publisher</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for app in applications %}
+                            <tr>
+                                <td class="ps-4 fw-bold">{{ app.display_name }}</td>
+                                <td>{{ app.version|default:"-" }}</td>
+                                <td>{{ app.publisher|default:"-" }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Services Tab -->
+    <div class="tab-pane fade" id="services" role="tabpanel">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table id="servicesTable" class="table table-hover table-striped mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-4">Service Name</th>
+                                <th>Display Name</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for service in services %}
+                            <tr>
+                                <td class="ps-4 text-primary"><code>{{ service.name }}</code></td>
+                                <td>{{ service.display_name }}</td>
+                                <td>
+                                    {% if service.status == 'running' %}
+                                    <span class="badge bg-success">Running</span>
+                                    {% elif service.status == 'stopped' %}
+                                    <span class="badge bg-secondary">Stopped</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">{{ service.status|upper }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function () {
+        // Initialize DataTables
+        const appsTable = $('#appsTable').DataTable({
+            "pageLength": 25,
+            "order": [[0, "asc"]],
+            "searching": true,
+            "dom": 'rtip', // Hide default search box
+            "language": {
+                "emptyTable": "No applications found"
+            }
+        });
+
+        const servicesTable = $('#servicesTable').DataTable({
+            "pageLength": 25,
+            "order": [[0, "asc"]],
+            "searching": true,
+            "dom": 'rtip', // Hide default search box
+            "language": {
+                "emptyTable": "No services found"
+            }
+        });
+
+        // Search function
+        function performSearch(val) {
+            appsTable.search(val).draw();
+            servicesTable.search(val).draw();
+        }
+
+        // Connect custom search bar
+        $('#inventorySearch').on('input keyup', function () {
+            performSearch(this.value);
+        });
+
+        // Clear search
+        $('#clearSearch').on('click', function () {
+            $('#inventorySearch').val('');
+            performSearch('');
+        });
+
+        // Handle refresh button
+        $('#refreshDeviceData').on('click', function () {
+            const btn = $(this);
+            const deviceId = btn.data('id');
+            const originalHtml = btn.html();
+            btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Requesting...');
+
+            $.ajax({
+                url: `/api/v1/devices/${deviceId}/request_refresh/`,
+                type: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                success: function () {
+                    alert('Refresh requested! The device will collect and send new data on its next poll (within 5 mins).');
+                    location.reload();
+                },
+                error: function () {
+                    alert('Failed to request refresh.');
+                    btn.prop('disabled', false).html(originalHtml);
+                }
+            });
+        });
+
+        // Handle delete button
+        $('#deleteDevice').on('click', function () {
+            const btn = $(this);
+            const deviceId = btn.data('id');
+            const hostname = btn.data('hostname');
+            const originalHtml = btn.html();
+
+            if (confirm(`Are you sure you want to permanently delete device "${hostname}"? This will remove all its inventory history.`)) {
+                btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Deleting...');
+                $.ajax({
+                    url: `/api/v1/devices/${deviceId}/`,
+                    type: 'DELETE',
+                    headers: {
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    success: function () {
+                        window.location.href = "{% url 'dashboard:device_list' %}";
+                    },
+                    error: function () {
+                        alert('Failed to delete device.');
+                        btn.prop('disabled', false).html(originalHtml);
+                    }
+                });
+            }
+        });
+
+        // Fix for DataTables in Bootstrap Tabs
+        $('button[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
+            $($.fn.dataTable.tables(true)).DataTable().columns.adjust();
+        });
+    });
+</script>
+{% endblock %}
