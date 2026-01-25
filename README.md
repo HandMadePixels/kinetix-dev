@@ -24,7 +24,10 @@ Kinetix is a professional-grade, Django-based endpoint management system designe
 ### 🛠️ Remote Administration (Remote Actions)
 - **Interactive Remote Reboot:** Trigger a managed restart with a custom administrator message.
     - **Client-Side UI:** Users see a branded popup with options to "Restart Now" or "Later" (30m, 1h, 2h, 4h).
-    - **Smart Postponement:** Automatic 10-minute warning before restart; allows up to 3 postponements before enforcing the reboot.
+    - **Session 0 Bypass:** Uses Windows Task Scheduler (`schtasks`) to display interactive GUIs from the SYSTEM service session.
+    - **Smart Postponement:** Non-blocking postponement timers using `tkinter.after`.
+- **Service Control:** Remotely start or stop Windows services with robust error handling (handles "already running/stopped" states).
+- **Remote Shell:** Execute arbitrary shell commands on endpoints with real-time output capture.
 - **Dynamic Registry Management:** Remotely create or modify Windows Registry keys and values (HKLM, HKCU, HKCR, HKU) with support for REG_SZ, REG_DWORD, etc.
 - **Command Tracking:** Real-time monitoring of remote command execution status (Pending -> Sent -> Completed/Failed).
 
@@ -36,6 +39,8 @@ Kinetix is a professional-grade, Django-based endpoint management system designe
 ### 🛡️ Enterprise-Grade Security
 - **Hardened Production Mode:** Support for `DEBUG=False` with secure media serving and CSRF meta-tag fallbacks for AJAX reliability.
 - **Encrypted Communication:** Full JWT authentication for agents and Fernet encryption for sensitive database fields.
+- **RSA Signing:** Update files are signed with RSA-4096 (PSS padding) to ensure authenticity and integrity.
+- **Malware Scanning:** Integrated VirusTotal and ClamAV scanning for all uploaded software updates.
 - **Remote Config Sync:** Remotely adjust the fleet's poll interval (heartbeat frequency) directly from the Command Center UI.
 
 ---
@@ -97,4 +102,4 @@ Kinetix/
 Proprietary - All Rights Reserved.
 
 ## 🏷️ Version
-1.2.0 (January 2026) - *Remote Administration & Interactive Reboot Update*
+1.2.1 (January 2026) - *Hardened Service Control & Shell Update*

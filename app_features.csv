@@ -1,0 +1,29 @@
+Title,Description,Status
+Device Registration,Automatic registration of new devices via JWT-protected API,Done
+Heartbeat Monitoring,Real-time tracking of device online/offline status,Done
+Inventory Collection (Services),Automated collection and tracking of Windows services,Done
+Inventory Collection (Apps),Automated collection of installed software from Registry,Done
+Forced Inventory Refresh,Trigger immediate inventory collection from dashboard,Done
+Update Center,Upload and manage MSI/EXE software updates,Done
+RSA Signature Verification,Ensure update authenticity using RSA-4096 signing,Done
+Malware Scanning,Integration with VirusTotal and ClamAV for update safety,Done
+Software Deployment,Managed push of updates to target devices or groups,Done
+Deployment Scheduling,Schedule software pushes for specific times,Done
+Silent Uninstallation,Remote software removal with automatic silent flag injection,Done
+Remote Service Control,Start and stop Windows services with robust error handling,Done
+Remote Shell Execution,Execute arbitrary shell commands and capture output,Done
+Remote Registry Management,Create or modify HKLM/HKCU/HKU/HKCR registry keys,Done
+Interactive Remote Reboot,Branded reboot notifications with postponement options,Done
+Session 0 Bypass,Display interactive GUIs from SYSTEM service using schtasks,Done
+Audit Logging,Comprehensive tracking of user and device actions,Done
+CSV Deployment Reports,Export deployment status reports to CSV for compliance,Done
+Dashboard Analytics,Visual charts for OS distribution and connectivity stats,Done
+System Configuration,Remote adjustment of poll intervals and system policies,Done
+Malware Scan Fallback,Graceful handling when scanning APIs are unavailable,Done
+Encrypted Field Storage,AES encryption for sensitive database fields like keys,Done
+Credential Manager Integration,Secure storage of agent tokens using Windows DPAPI,Done
+Automated MSI Builder,Scripted generation of agent installer with all assets,Done
+Self-Updating Agent,Mechanism for the agent to update itself remotely,In-Progress
+Group-Based Policies,Apply registry or service settings to entire device groups,Open
+Alerting System,Email/Webhook alerts for critical system events,Open
+Advanced Malware Analysis,Integration with sandboxes for dynamic analysis,Open
