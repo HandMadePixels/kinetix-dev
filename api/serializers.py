@@ -4,7 +4,7 @@ DRF Serializers for API endpoints
 
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from core.models import Device, DeviceGroup, AuditLog
+from core.models import Device, DeviceGroup, AuditLog, RemoteCommand
 from inventory.models import ServiceInventory, ApplicationInventory
 from updates.models import Update, UpdatePush
 
@@ -20,7 +20,8 @@ class DeviceSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'hostname', 'ip_address', 'os_version', 'status',
             'is_online', 'group', 'group_name', 'registered_at',
-            'last_seen', 'last_ip', 'notes'
+            'last_seen', 'last_ip', 'notes', 'current_user',
+            'last_boot_time', 'uptime'
         ]
         read_only_fields = ['id', 'registered_at', 'last_seen', 'last_ip']
     
@@ -100,7 +101,7 @@ class ApplicationInventorySerializer(serializers.ModelSerializer):
     
     class Meta:
         model = ApplicationInventory
-        fields = ['display_name', 'version', 'publisher']
+        fields = ['display_name', 'version', 'publisher', 'uninstall_string']
 
 
 class InventorySubmissionSerializer(serializers.Serializer):
@@ -110,6 +111,9 @@ class InventorySubmissionSerializer(serializers.Serializer):
     installed_apps = ApplicationInventorySerializer(many=True)
     ip_address = serializers.IPAddressField(required=False)
     os_version = serializers.CharField(required=False, max_length=255)
+    current_user = serializers.CharField(required=False, max_length=255, allow_null=True)
+    last_boot_time = serializers.DateTimeField(required=False, allow_null=True)
+    uptime = serializers.CharField(required=False, max_length=100, allow_null=True)
     
     def create(self, validated_data):
         """Store inventory data"""
@@ -316,13 +320,19 @@ class PushUpdateSerializer(serializers.Serializer):
             push_records.append(push)
             
             # Queue Celery task
-            if schedule:
-                push_update_to_device.apply_async(
-                    args=[str(push.id)],
-                    eta=schedule
-                )
-            else:
-                push_update_to_device.delay(str(push.id))
+            try:
+                if schedule:
+                    push_update_to_device.apply_async(
+                        args=[str(push.id)],
+                        eta=schedule
+                    )
+                else:
+                    push_update_to_device.delay(str(push.id))
+            except Exception as e:
+                # Log error but don't fail the request since the DB record is already created
+                # and will be picked up by the agent polling or manual retry
+                import logging
+                logging.getLogger(__name__).error(f"Failed to queue celery task for push {push.id}: {e}")
         
         return push_records
 
@@ -386,3 +396,16 @@ class AuditLogSerializer(serializers.ModelSerializer):
             'resource_type', 'resource_id', 'metadata'
         ]
         read_only_fields = ['id', 'timestamp']
+
+class RemoteCommandSerializer(serializers.ModelSerializer):
+    """Serializer for RemoteCommand model"""
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = RemoteCommand
+        fields = [
+            'id', 'device', 'command_type', 'payload', 'status', 
+            'result_message', 'created_at', 'executed_at', 
+            'created_by', 'created_by_username'
+        ]
+        read_only_fields = ['id', 'created_at', 'executed_at']

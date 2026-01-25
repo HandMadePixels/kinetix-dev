@@ -1,0 +1,82 @@
+{% extends 'base.html' %}
+
+{% block title %}Audit Logs | Kinetix{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>System Audit Logs</h1>
+    <span class="badge bg-secondary d-flex align-items-center px-3">{{ logs.count }} Total Logs</span>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table id="auditLogsTable" class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-4">Timestamp</th>
+                        <th>User/Device</th>
+                        <th>Action</th>
+                        <th>Severity</th>
+                        <th>Description</th>
+                        <th class="text-end pe-4">IP Address</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td class="ps-4 text-nowrap"><code>{{ log.timestamp|date:"Y-m-d H:i:s" }}</code></td>
+                        <td>
+                            {% if log.user %}
+                            <span class="badge bg-primary"><i class="bi bi-person"></i> {{ log.user.username }}</span>
+                            {% elif log.device %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-laptop"></i> {{ log.device.hostname }}</span>
+                            {% else %}
+                            <span class="text-muted">System</span>
+                            {% endif %}
+                        </td>
+                        <td><strong>{{ log.action }}</strong></td>
+                        <td>
+                            {% if log.severity == 'error' %}
+                            <span class="badge bg-danger rounded-pill">Error</span>
+                            {% elif log.severity == 'warning' %}
+                            <span class="badge bg-warning text-dark rounded-pill">Warning</span>
+                            {% elif log.severity == 'critical' %}
+                            <span class="badge bg-danger rounded-pill">CRITICAL</span>
+                            {% else %}
+                            <span class="badge bg-info text-dark rounded-pill">Info</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ log.description }}</td>
+                        <td class="text-end pe-4"><code>{{ log.ip_address }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function () {
+        $('#auditLogsTable').DataTable({
+            "pageLength": 50,
+            "order": [[0, "desc"]], // Sort by Timestamp
+            "retrieve": true,
+            "columns": [
+                null, // Timestamp
+                null, // User/Device
+                null, // Action
+                null, // Severity
+                null, // Description
+                null  // IP Address
+            ],
+            "language": {
+                "search": "Filter logs:"
+            }
+        });
+    });
+</script>
+{% endblock %}

@@ -3,7 +3,7 @@ import socket
 import winreg
 import win32service
 import json
-from logger import agent_log
+from agent_logger import agent_log
 
 class InventoryCollector:
     """Collects system information, services, and installed applications"""
@@ -33,6 +33,50 @@ class InventoryCollector:
             "architecture": platform.machine(),
             "cpu_count": platform.processor(),
         }
+
+    @staticmethod
+    def get_logged_in_user():
+        """Retrieve currently logged in user on Windows"""
+        try:
+            import wmi
+            c = wmi.WMI()
+            # This gets the console user
+            for user in c.Win32_ComputerSystem():
+                return user.UserName
+        except:
+            # Fallback to environment variables if WMI fails
+            import os
+            user = os.environ.get('USERNAME')
+            domain = os.environ.get('USERDOMAIN')
+            if user and domain:
+                return f"{domain}\\{user}"
+            return user or "Unknown"
+
+    @staticmethod
+    def get_uptime_info():
+        """Retrieve last boot time and calculate uptime using WMI"""
+        try:
+            import wmi
+            import datetime
+            c = wmi.WMI()
+            for os in c.Win32_OperatingSystem():
+                # Format: 20260122110924.500000+330
+                boot_str = os.LastBootUpTime.split('.')[0]
+                boot_dt = datetime.datetime.strptime(boot_str, "%Y%m%d%H%M%S")
+                
+                now = datetime.datetime.now()
+                delta = now - boot_dt
+                
+                # Format uptime string
+                days = delta.days
+                hours, remainder = divmod(delta.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                
+                uptime_str = f"{days}d {hours}h {minutes}m"
+                return boot_dt.isoformat(), uptime_str
+        except Exception as e:
+            agent_log.error(f"Failed to get uptime: {e}")
+            return None, "Unknown"
 
     @staticmethod
     def collect_services():
@@ -107,10 +151,20 @@ class InventoryCollector:
                             except:
                                 publisher = "Unknown"
                             
+                            try:
+                                # Try to get QuietUninstallString first
+                                try:
+                                    uninstall = winreg.QueryValueEx(sub_key, "QuietUninstallString")[0]
+                                except:
+                                    uninstall = winreg.QueryValueEx(sub_key, "UninstallString")[0]
+                            except:
+                                uninstall = ""
+                            
                             apps.append({
                                 "display_name": str(name)[:255],
                                 "version": str(version)[:100],
-                                "publisher": str(publisher)[:255]
+                                "publisher": str(publisher)[:255],
+                                "uninstall_string": str(uninstall)
                             })
                         except Exception:
                             continue
@@ -130,10 +184,14 @@ class InventoryCollector:
     def collect_full_inventory(self):
         """Prepare complete inventory payload"""
         info = self.get_system_info()
+        boot_time, uptime = self.get_uptime_info()
         return {
             "hostname": info["hostname"],
             "ip_address": info["ip_address"],
             "os_version": info["os_version"],
+            "current_user": self.get_logged_in_user(),
+            "last_boot_time": boot_time,
+            "uptime": uptime,
             "services": self.collect_services(),
             "installed_apps": self.collect_applications()
         }

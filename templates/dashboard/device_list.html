@@ -59,29 +59,100 @@
                         <td>{{ device.last_seen|timesince }} ago</td>
                         <td class="text-end pe-4">
                             <div class="btn-group">
+                                {% if perms.core.can_view_details %}
+                                <button type="button" class="btn btn-sm btn-outline-info view-details"
+                                    data-id="{{ device.id }}" 
+                                    data-hostname="{{ device.hostname }}"
+                                    data-group="{{ device.group.name|default:'None' }}"
+                                    data-user="{{ device.current_user|default:'None' }}"
+                                    data-os="{{ device.os_version }}"
+                                    data-ip="{{ device.ip_address }}"
+                                    data-last-active="{{ device.last_seen|date:'Y-m-d H:i:s' }}"
+                                    data-last-boot="{{ device.last_boot_time|date:'Y-m-d H:i:s'|default:'Unknown' }}"
+                                    data-uptime="{{ device.uptime|default:'Unknown' }}"
+                                    data-notes="{{ device.notes|default:'No notes' }}"
+                                    title="View Details">
+                                    <i class="bi bi-info-circle"></i>
+                                </button>
+                                {% endif %}
                                 <a href="{% url 'dashboard:device_inventory' device.pk %}"
-                                    class="btn btn-sm btn-outline-primary">
-                                    <i class="bi bi-list-check"></i> View Inventory
+                                    class="btn btn-sm btn-outline-primary" title="View Inventory">
+                                    <i class="bi bi-list-check"></i>
                                 </a>
+                                {% if perms.core.can_request_refresh %}
                                 <button type="button" class="btn btn-sm btn-outline-success refresh-device"
                                     data-id="{{ device.id }}" title="Request Refresh">
                                     <i class="bi bi-arrow-clockwise"></i>
                                 </button>
+                                {% endif %}
+                                {% if perms.core.delete_device %}
                                 <button type="button" class="btn btn-sm btn-outline-danger delete-device"
                                     data-id="{{ device.id }}" data-hostname="{{ device.hostname }}"
                                     title="Delete Device">
                                     <i class="bi bi-trash"></i>
                                 </button>
+                                {% endif %}
                             </div>
                         </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="6" class="text-center py-5 text-muted">No devices registered yet.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+    </div>
+</div>
+
+<!-- Device Details Modal -->
+<div class="modal fade" id="deviceDetailsModal" tabindex="-1" aria-labelledby="deviceDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title" id="deviceDetailsModalLabel text-white"><i class="bi bi-laptop"></i> Device Details</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="small text-muted d-block">Hostname</label>
+                        <p class="fw-bold" id="modal-hostname"></p>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="small text-muted d-block">Device Group</label>
+                        <p id="modal-group"></p>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="small text-muted d-block">Logged-in User</label>
+                        <p id="modal-user"></p>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="small text-muted d-block">IP Address</label>
+                        <p id="modal-ip"><code></code></p>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="small text-muted d-block">OS Version</label>
+                        <p id="modal-os"></p>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="small text-muted d-block">Last Active</label>
+                        <p id="modal-last-active"></p>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="small text-muted d-block">Last Boot Time</label>
+                        <p id="modal-last-boot"></p>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="small text-muted d-block">System Uptime</label>
+                        <p id="modal-uptime"></p>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="small text-muted d-block">Internal Notes</label>
+                        <div class="p-2 bg-light border rounded" id="modal-notes" style="min-height: 60px;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
         </div>
     </div>
 </div>
@@ -92,10 +163,36 @@
     $(document).ready(function () {
         $('#devicesTable').DataTable({
             "pageLength": 25,
-            "order": [[4, "desc"]], // Sort by Last Seen by default
+            "order": [[5, "desc"]], // Sort by Last Seen
+            "retrieve": true,
+            "columns": [
+                null, // Hostname
+                null, // Status
+                null, // Connectivity
+                null, // IP Address
+                null, // OS Version
+                null, // Last Seen
+                { "orderable": false } // Actions
+            ],
             "language": {
                 "search": "Filter devices:"
             }
+        });
+
+        // Handle view details button
+        $(document).on('click', '.view-details', function () {
+            const btn = $(this);
+            $('#modal-hostname').text(btn.data('hostname'));
+            $('#modal-group').text(btn.data('group'));
+            $('#modal-user').text(btn.data('user'));
+            $('#modal-os').text(btn.data('os'));
+            $('#modal-ip code').text(btn.data('ip'));
+            $('#modal-last-active').text(btn.data('last-active'));
+            $('#modal-last-boot').text(btn.data('last-boot'));
+            $('#modal-uptime').text(btn.data('uptime'));
+            $('#modal-notes').text(btn.data('notes'));
+            
+            $('#deviceDetailsModal').modal('show');
         });
 
         // Handle refresh button (using event delegation for DataTables compatibility)
@@ -117,8 +214,22 @@
                     alert('Refresh requested! The device will update its inventory on the next poll.');
                     location.reload();
                 },
-                error: function () {
-                    alert('Failed to request refresh.');
+                error: function (xhr) {
+                    let errorMsg = 'Failed to request refresh.';
+                    if (xhr.responseJSON) {
+                        const errors = xhr.responseJSON;
+                        if (typeof errors === 'string') {
+                            errorMsg = errors;
+                        } else if (typeof errors === 'object') {
+                            const firstKey = Object.keys(errors)[0];
+                            const firstVal = errors[firstKey];
+                            errorMsg = Array.isArray(firstVal) ? firstVal[0] : JSON.stringify(firstVal);
+                            if (firstKey !== 'non_field_errors' && firstKey !== 'detail') {
+                                errorMsg = firstKey + ': ' + errorMsg;
+                            }
+                        }
+                    }
+                    alert('Error: ' + errorMsg);
                     icon.removeClass('bi-spin');
                     btn.prop('disabled', false);
                 }
@@ -142,8 +253,22 @@
                     success: function () {
                         location.reload();
                     },
-                    error: function () {
-                        alert('Failed to delete device.');
+                    error: function (xhr) {
+                        let errorMsg = 'Failed to delete device.';
+                        if (xhr.responseJSON) {
+                            const errors = xhr.responseJSON;
+                            if (typeof errors === 'string') {
+                                errorMsg = errors;
+                            } else if (typeof errors === 'object') {
+                                const firstKey = Object.keys(errors)[0];
+                                const firstVal = errors[firstKey];
+                                errorMsg = Array.isArray(firstVal) ? firstVal[0] : JSON.stringify(firstVal);
+                                if (firstKey !== 'non_field_errors' && firstKey !== 'detail') {
+                                    errorMsg = firstKey + ': ' + errorMsg;
+                                }
+                            }
+                        }
+                        alert('Error: ' + errorMsg);
                         btn.prop('disabled', false).html('<i class="bi bi-trash"></i>');
                     }
                 });

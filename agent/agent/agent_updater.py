@@ -8,7 +8,7 @@ import time
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import serialization
-from logger import agent_log
+from agent_logger import agent_log
 
 class AgentUpdater:
     """Handles secure download, verification, and installation of updates"""

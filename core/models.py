@@ -22,6 +22,9 @@ class Device(models.Model):
     hostname = models.CharField(max_length=255, unique=True, db_index=True)
     ip_address = models.GenericIPAddressField()
     os_version = models.CharField(max_length=255)
+    current_user = models.CharField(max_length=255, blank=True, null=True)
+    last_boot_time = models.DateTimeField(null=True, blank=True)
+    uptime = models.CharField(max_length=100, blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active', db_index=True)
     
     # Authentication
@@ -45,7 +48,11 @@ class Device(models.Model):
             models.Index(fields=['hostname', 'status']),
             models.Index(fields=['last_seen', 'status']),
         ]
-    
+        permissions = [
+            ("can_view_details", "Can view detailed device info"),
+            ("can_request_refresh", "Can request inventory refresh"),
+        ]
+
     def __str__(self):
         return f"{self.hostname} ({self.ip_address})"
     
@@ -62,7 +69,14 @@ class Device(models.Model):
     def is_online(self):
         """Check if device is online based on heartbeat"""
         from django.conf import settings
-        timeout = timezone.timedelta(seconds=settings.DEVICE_HEARTBEAT_TIMEOUT)
+        try:
+            from core.models import SystemConfig
+            config = SystemConfig.get_config()
+            timeout_seconds = config.device_heartbeat_timeout
+        except:
+            timeout_seconds = getattr(settings, 'DEVICE_HEARTBEAT_TIMEOUT', 300)
+            
+        timeout = timezone.timedelta(seconds=timeout_seconds + 60) # Add 1m grace period
         return timezone.now() - self.last_seen < timeout
     
     def update_heartbeat(self, ip_address=None, update_primary=True):
@@ -248,3 +262,48 @@ class RSAKeyPair(models.Model):
         if not self.pk and RSAKeyPair.objects.exists():
             raise ValueError("RSA keypair already exists")
         super().save(*args, **kwargs)
+
+class RemoteCommand(models.Model):
+    """Generic remote execution commands for agents"""
+    
+    COMMAND_CHOICES = [
+        ('uninstall', 'Uninstall Software'),
+        ('shell', 'Execute Shell Command'),
+        ('reboot', 'Restart Device'),
+        ('registry', 'Registry Management'),
+        ('service_control', 'Service Control (Start/Stop)'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('sent', 'Sent to Agent'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='remote_commands')
+    command_type = models.CharField(max_length=50, choices=COMMAND_CHOICES)
+    
+    # Payload (e.g., the uninstall string or script)
+    payload = models.TextField()
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    result_message = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    executed_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        permissions = [
+            ("can_trigger_reboot", "Can remotely restart devices"),
+            ("can_manage_registry", "Can manage device registry"),
+            ("can_control_services", "Can start/stop device services"),
+            ("can_uninstall_apps", "Can remotely uninstall software"),
+            ("can_execute_shell", "Can execute arbitrary shell commands"),
+        ]
+
+    def __str__(self):
+        return f"{self.command_type} on {self.device.hostname} ({self.status})"

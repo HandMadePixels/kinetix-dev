@@ -11,7 +11,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from core.models import Device, DeviceGroup, AuditLog
+from core.models import Device, DeviceGroup, AuditLog, SystemConfig, RemoteCommand
 from inventory.models import InventorySnapshot
 from updates.models import Update, UpdatePush
 from api.serializers import (
@@ -19,7 +19,8 @@ from api.serializers import (
     InventorySubmissionSerializer, UpdateSerializer,
     UpdateUploadSerializer, PushUpdateSerializer,
     UpdatePushSerializer, AuditLogSerializer,
-    DeviceGroupSerializer, UpdateStatusSerializer
+    DeviceGroupSerializer, UpdateStatusSerializer,
+    RemoteCommandSerializer
 )
 
 
@@ -100,6 +101,9 @@ class DeviceViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def request_refresh(self, request, pk=None):
         """Request a forced inventory refresh from the device"""
+        if not request.user.has_perm('core.can_request_refresh'):
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            
         device = self.get_object()
         device.refresh_inventory_requested = True
         device.save(update_fields=['refresh_inventory_requested'])
@@ -223,6 +227,9 @@ class PushUpdateView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated]
     
     def create(self, request, *args, **kwargs):
+        if not request.user.has_perm('updates.can_deploy_updates'):
+            return Response({'error': 'Permission denied: can_deploy_updates required'}, status=status.HTTP_403_FORBIDDEN)
+            
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         push_records = serializer.save()
@@ -283,11 +290,30 @@ class InventorySubmissionView(generics.CreateAPIView):
         
         reported_ip = serializer.validated_data.get('ip_address')
         os_version = serializer.validated_data.get('os_version')
+        current_user = serializer.validated_data.get('current_user')
+        last_boot_time = serializer.validated_data.get('last_boot_time')
+        uptime = serializer.validated_data.get('uptime')
         connection_ip = self.get_client_ip()
         
+        update_fields = []
         if os_version:
             device.os_version = os_version
-            device.save(update_fields=['os_version'])
+            update_fields.append('os_version')
+        
+        if current_user:
+            device.current_user = current_user
+            update_fields.append('current_user')
+
+        if last_boot_time:
+            device.last_boot_time = last_boot_time
+            update_fields.append('last_boot_time')
+
+        if uptime:
+            device.uptime = uptime
+            update_fields.append('uptime')
+            
+        if update_fields:
+            device.save(update_fields=update_fields)
 
         if reported_ip:
             # Trust reported IP for primary address (likely local/VPN IP)
@@ -425,8 +451,28 @@ class DeviceCommandsView(generics.GenericAPIView):
             push.pushed_at = timezone.now()
             push.save()
         
+        # Get pending generic commands
+        pending_remote_cmds = RemoteCommand.objects.filter(
+            device=device,
+            status='pending'
+        ).order_by('created_at')
+
+        for rcmd in pending_remote_cmds:
+            commands.append({
+                'command': rcmd.command_type,
+                'command_id': str(rcmd.id),
+                'payload': rcmd.payload
+            })
+            rcmd.status = 'sent'
+            rcmd.executed_at = timezone.now() # This is "sent at" in this context
+            rcmd.save()
+        
+        # Include current global poll interval
+        config = SystemConfig.get_config()
+        
         return Response({
-            'commands': commands
+            'commands': commands,
+            'poll_interval': config.device_heartbeat_timeout
         })
     
     def get_client_ip(self):
@@ -551,3 +597,125 @@ class UpdateStatusPollView(generics.ListAPIView):
         else:
             ip = self.request.META.get('REMOTE_ADDR', '0.0.0.0')
         return ip
+
+class RemoteCommandStatusView(generics.GenericAPIView):
+    """Agents report result of a generic remote command"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        data = request.data
+        command_id = data.get('command_id')
+        status = data.get('status') # 'completed' or 'failed'
+        message = data.get('message', '')
+
+        rcmd = get_object_or_404(RemoteCommand, id=command_id, device=request.user)
+        rcmd.status = status
+        rcmd.result_message = message
+        rcmd.save()
+
+        return Response({'status': 'ok'})
+
+class RemoteCommandActionView(generics.GenericAPIView):
+    """Dashboard triggers a remote command (e.g. uninstall)"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        device_id = request.data.get('device_id')
+        cmd_type = request.data.get('command_type')
+        payload = request.data.get('payload')
+
+        # Check specific permissions based on command type
+        perm_map = {
+            'reboot': 'core.can_trigger_reboot',
+            'registry': 'core.can_manage_registry',
+            'service_control': 'core.can_control_services',
+            'uninstall': 'core.can_uninstall_apps',
+            'shell': 'core.can_execute_shell'
+        }
+        
+        required_perm = perm_map.get(cmd_type)
+        if not required_perm:
+            return Response({'error': f'Unsupported command type: {cmd_type}'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        if not request.user.has_perm(required_perm):
+            return Response({'error': f'Permission denied: {required_perm} required'}, status=status.HTTP_403_FORBIDDEN)
+
+        device = get_object_or_404(Device, id=device_id)
+        
+        rcmd = RemoteCommand.objects.create(
+            device=device,
+            command_type=cmd_type,
+            payload=payload,
+            created_by=request.user
+        )
+
+        AuditLog.objects.create(
+            user=request.user,
+            device=device,
+            ip_address=self.get_client_ip(),
+            action='device_update',
+            severity='warning',
+            description=f"Remote command '{cmd_type}' queued for {device.hostname}",
+            resource_type='RemoteCommand',
+            resource_id=str(rcmd.id)
+        )
+
+        return Response({'status': 'queued', 'command_id': str(rcmd.id)})
+
+    def get_client_ip(self):
+        """Extract client IP from request"""
+        x_forwarded_for = self.request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = self.request.META.get('REMOTE_ADDR', '0.0.0.0')
+        return ip
+
+class RemoteCommandViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for viewing remote commands"""
+    queryset = RemoteCommand.objects.all()
+    serializer_class = RemoteCommandSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['device', 'status', 'command_type']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        device_id = self.request.query_params.get('device')
+        if device_id:
+            queryset = queryset.filter(device_id=device_id)
+        return queryset.order_by('-created_at')
+
+class UpdatePushViewSet(viewsets.GenericViewSet):
+    """ViewSet for actions on UpdatePush records"""
+    queryset = UpdatePush.objects.all()
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=True, methods=['post'])
+    def retry(self, request, pk=None):
+        """Retry a failed update push"""
+        if not request.user.has_perm('updates.can_retry_deployments'):
+            return Response({'error': 'Permission denied: can_retry_deployments required'}, status=status.HTTP_403_FORBIDDEN)
+            
+        push = self.get_object()
+        
+        if push.status != 'failed':
+            return Response(
+                {'error': f'Only failed pushes can be retried. Current status: {push.status}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Reset push status
+        push.status = 'pending'
+        push.scheduled_at = timezone.now()
+        push.error_message = ''
+        push.save()
+        
+        # Trigger celery task
+        from updates.tasks import push_update_to_device
+        try:
+            push_update_to_device.delay(str(push.id))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to queue retry task for push {push.id}: {e}")
+            
+        return Response({'status': 'retrying'})

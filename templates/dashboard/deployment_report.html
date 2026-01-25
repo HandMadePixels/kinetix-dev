@@ -1,0 +1,121 @@
+{% extends 'base.html' %}
+
+{% block title %}Deployment Report | Kinetix{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Deployment Status Report</h1>
+    <div class="d-flex gap-2">
+        <a href="{% url 'dashboard:deployment_report_export' %}?{{ request.GET.urlencode }}" class="btn btn-outline-success">
+            <i class="bi bi-download"></i> Export CSV
+        </a>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label small fw-bold">Filter by Software</label>
+                <select name="update_id" class="form-select">
+                    <option value="">-- All Software --</option>
+                    {% for update in updates %}
+                    <option value="{{ update.id }}" {% if request.GET.update_id == update.id|stringformat:"s" %}selected{% endif %}>
+                        {{ update.name }} (v{{ update.version }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-bold">Filter by Status</label>
+                <select name="status" class="form-select">
+                    <option value="">-- All Statuses --</option>
+                    {% for status_val, status_label in status_choices %}
+                    <option value="{{ status_val }}" {% if request.GET.status == status_val %}selected{% endif %}>
+                        {{ status_label }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary me-2">Apply Filters</button>
+                <a href="{% url 'dashboard:deployment_report' %}" class="btn btn-outline-secondary">Reset</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table id="deploymentReportTable" class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-4">Software</th>
+                        <th>Device</th>
+                        <th>Status</th>
+                        <th>Scheduled At</th>
+                        <th>Pushed At</th>
+                        <th>Completed At</th>
+                        <th class="text-end pe-4">Error Detail</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for push in pushes %}
+                    <tr>
+                        <td class="ps-4">
+                            <div class="fw-bold">{{ push.update.name }}</div>
+                            <small class="text-muted">v{{ push.update.version }}</small>
+                        </td>
+                        <td>
+                            <div class="fw-bold">{{ push.device.hostname }}</div>
+                            <code>{{ push.device.ip_address }}</code>
+                        </td>
+                        <td>
+                            {% if push.status == 'completed' %}
+                            <span class="badge bg-success">Success</span>
+                            {% elif push.status == 'failed' %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% elif push.status == 'in_progress' %}
+                            <span class="badge bg-primary">In Progress</span>
+                            {% else %}
+                            <span class="badge bg-warning text-dark">Pending</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ push.scheduled_at|date:"Y-m-d H:i" }}</td>
+                        <td>{{ push.pushed_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                        <td>{{ push.completed_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                        <td class="text-end pe-4 text-danger small">{{ push.error_message }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function () {
+        $('#deploymentReportTable').DataTable({
+            "pageLength": 50,
+            "order": [[3, "desc"]], // Sort by Scheduled At
+            "retrieve": true,
+            "columns": [
+                null, // Software
+                null, // Device
+                null, // Status
+                null, // Scheduled At
+                null, // Pushed At
+                null, // Completed At
+                null  // Error Detail
+            ],
+            "language": {
+                "search": "Quick Filter:"
+            }
+        });
+    });
+</script>
+{% endblock %}

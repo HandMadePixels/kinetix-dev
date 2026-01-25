@@ -1,328 +1,100 @@
-# Endpoint Management Kinetix
+# Kinetix: Enterprise Endpoint Management
 
 ## Overview
-Enterprise-grade Django-based endpoint management system for secure Windows update delivery and device inventory management. Packaged as a standalone Windows MSI installer.
+Kinetix is a professional-grade, Django-based endpoint management system designed for secure Windows update delivery, real-time device monitoring, and remote software management. It features a high-performance **pull-based architecture** where remote agents poll the command center for instructions, ensuring compatibility with strict corporate firewalls without compromising security.
 
-## Features
-- **Device Registration**: Automatic device registration with JWT authentication
-- **Update Management**: Upload, verify, and push updates with digital signatures
-- **Inventory Management**: Track services and installed applications per device
-- **Real-time Dashboard**: Monitor device status, pending updates, and inventory
-- **Audit Logging**: Complete audit trail for all operations
-- **Security**: OWASP-compliant with encryption, rate limiting, and malware scanning
+---
 
-## Architecture
-- **Backend**: Django 5.x + Django REST Framework
-- **Database**: SQLite (embedded) with PostgreSQL migration path
-- **Task Queue**: Celery + Redis for async operations
-- **Frontend**: Django Templates + HTMX + Bootstrap 5
-- **Security**: JWT auth, RSA signatures, Fernet encryption
+## 🚀 Key Features
 
-## Installation
+### 💻 Device Management & Insights
+- **Deep Device Visibility:** Interactive detail modals showing **Last Boot Time**, **System Uptime**, **Logged-in User**, and management notes.
+- **Console User Tracking:** Automatically identifies and reports the active Windows user using WMI.
+- **Detailed Inventory:** Real-time tracking of Windows Services and Installed Applications.
+- **Proactive Sync:** Agents automatically repopulate inventory data immediately after registration, service restarts, or server-side deletion.
+- **Instant Refresh:** Trigger immediate inventory collection from the dashboard.
 
-### Quick Start (Windows) ⚡
-**Fastest way to get started - automated setup!**
+### 📦 Software Deployment & Lifecycle
+- **Advanced Update Center:** Upload and deploy MSI/EXE updates with support for decimal versioning (e.g., `1.2.3.4`).
+- **Proactive Inventory Sync:** The application inventory is automatically updated immediately after a successful software installation.
+- **Remote Uninstallation:** Remotely remove software using the Windows Registry's `QuietUninstallString` with automatic silent-flag injection.
+- **Update Resiliency:** Intelligent "wait-for-online" queueing. Updates are delivered when devices reconnect, adhering to user-defined schedules.
+- **Smart Retries:** One-click "Retry" functionality for failed deployments with full error logs from the remote installer.
 
-```cmd
-# 1. Run one-time setup (installs everything)
-quickstart.bat
+### 🛠️ Remote Administration (Remote Actions)
+- **Interactive Remote Reboot:** Trigger a managed restart with a custom administrator message.
+    - **Client-Side UI:** Users see a branded popup with options to "Restart Now" or "Later" (30m, 1h, 2h, 4h).
+    - **Smart Postponement:** Automatic 10-minute warning before restart; allows up to 3 postponements before enforcing the reboot.
+- **Dynamic Registry Management:** Remotely create or modify Windows Registry keys and values (HKLM, HKCU, HKCR, HKU) with support for REG_SZ, REG_DWORD, etc.
+- **Command Tracking:** Real-time monitoring of remote command execution status (Pending -> Sent -> Completed/Failed).
 
-# 2. Start Redis in a separate terminal
-redis-server
+### 📊 Reporting & Auditing
+- **Deployment Reports:** Comprehensive status tracking for all software pushes with **CSV Export** capability.
+- **System Audit Logs:** Dedicated logs page capturing every user and device action with severity levels and IP tracking.
+- **Visual Analytics:** Real-time dashboard with online/offline status, OS distribution, and deployment activity history.
 
-# 3. Start all services (Django + Celery)
-run_dev.bat
+### 🛡️ Enterprise-Grade Security
+- **Hardened Production Mode:** Support for `DEBUG=False` with secure media serving and CSRF meta-tag fallbacks for AJAX reliability.
+- **Encrypted Communication:** Full JWT authentication for agents and Fernet encryption for sensitive database fields.
+- **Remote Config Sync:** Remotely adjust the fleet's poll interval (heartbeat frequency) directly from the Command Center UI.
+
+---
+
+## 🏗️ Architecture
+- **Backend:** Django 5.x + Django REST Framework.
+- **Task Queue:** Celery + Redis for asynchronous deployment and scanning.
+- **Frontend:** Bootstrap 5 + DataTables.js + Chart.js.
+- **Agent:** Python-based Windows Service (compiled to EXE/MSI) with Tkinter-based interactive UI.
+- **Security:** RSA-4096 signing, AES-256 field encryption, JWT Auth.
+
+---
+
+## 🛠️ Installation & Setup
+
+### Quick Start (Windows Development) ⚡
+1. **Setup Environment:** Run `quickstart.bat` to automate virtual environment and dependency installation.
+2. **Start Services:** Run `run_dev.bat`. This launches the Django server, Celery worker, and Celery beat in separate windows.
+3. **Access Dashboard:** Open `http://localhost:8000` (Default credentials: `admin` / `admin`).
+
+### Production Deployment
+1. **Configuration:** Set `DEBUG=False` in your `.env` file.
+2. **Launch:** Use `production_server.bat` to start the high-performance Waitress WSGI server.
+3. **HTTPS (Optional):** Configure `SESSION_COOKIE_SECURE=True` and `CSRF_COOKIE_SECURE=True` in `.env` if using SSL.
+
+---
+
+## 🤖 Agent Management
+
+The Kinetix Agent runs as a silent Windows Service.
+
+**Manual Commands (from agent directory):**
+- `kinetix_agent.exe inventory`: Force immediate inventory upload.
+- `kinetix_agent.exe register`: Force manual re-registration.
+- `kinetix_agent.exe set-server <url>`: Update the Command Center address.
+- `kinetix_agent.exe restart`: Restart the service to apply configuration changes.
+
+---
+
+## 📁 Project Structure
+```text
+Kinetix/
+├── agent/               # Windows Agent source, GUI, and installer scripts
+├── api/                 # REST API (Agent-to-Server communication)
+├── core/                # Core logic, Models (Device, Command, Config), and Security
+├── dashboard/           # UI Views and Dashboard logic
+├── inventory/           # Inventory data models and processing
+├── updates/             # Software update management and tasks
+├── templates/           # HTML Templates (Dashboard, Reports, Logs)
+├── keys/                # RSA Signing keys (Auto-generated)
+├── logs/                # System and service logs
+├── diag.py              # System diagnostic tool
+└── requirements.txt     # Backend dependencies
 ```
 
-That's it! The application will open in your browser at http://localhost:8000
+---
 
-See [BATCH_SCRIPTS.md](BATCH_SCRIPTS.md) for detailed information about all available scripts.
+## 📜 License
+Proprietary - All Rights Reserved.
 
-### MSI Installer (Recommended for Production)
-1. Download `Kinetix-Setup.msi`
-2. Run installer with admin privileges
-3. Access at `https://localhost:8000`
-4. Default credentials: admin/admin (change immediately)
-
-### Manual Installation
-```bash
-# Clone repository
-git clone <repo-url>
-cd EndpointSoln
-
-# Create virtual environment
-python -m venv venv
-venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Initialize database
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py collectstatic
-
-# Generate RSA keypair
-python manage.py generate_keypair
-
-# Run development server
-python manage.py runserver
-```
-
-## Project Structure
-```
-EndpointSoln/
-├── command_center/          # Django project settings
-├── core/                    # Core app (auth, models, utils)
-├── api/                     # REST API endpoints
-├── inventory/               # Device inventory management
-├── updates/                 # Update management
-├── dashboard/               # Admin dashboard
-├── static/                  # Static files (CSS, JS)
-├── templates/               # HTML templates
-├── media/                   # Uploaded files
-├── installer/               # MSI packaging scripts
-├── requirements.txt
-└── manage.py
-```
-
-## API Documentation
-
-### Authentication
-All API endpoints require JWT authentication (except registration).
-
-**Header**: `Authorization: Bearer <token>`
-
-### Endpoints
-
-#### Device Registration
-```http
-POST /api/v1/register
-Content-Type: application/json
-
-{
-  "hostname": "DEVICE-001",
-  "ip_address": "192.168.1.100",
-  "os_version": "Windows 11 Pro"
-}
-
-Response:
-{
-  "token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "device_id": "uuid",
-  "public_key": "-----BEGIN PUBLIC KEY-----..."
-}
-```
-
-#### Upload Update
-```http
-POST /api/v1/updates
-Authorization: Bearer <token>
-Content-Type: multipart/form-data
-
-file: <binary>
-version: "1.0.0"
-description: "Security patch"
-
-Response:
-{
-  "update_id": "uuid",
-  "sha256": "abc123...",
-  "signature": "def456...",
-  "scan_status": "clean"
-}
-```
-
-#### Push Update
-```http
-POST /api/v1/push-update
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "update_id": "uuid",
-  "target_hostnames": ["DEVICE-001", "DEVICE-002"],
-  "schedule": "2026-01-20T10:00:00Z"
-}
-
-Response:
-{
-  "task_id": "celery-task-uuid",
-  "status": "queued"
-}
-```
-
-#### Submit Inventory
-```http
-POST /api/v1/inventory
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "hostname": "DEVICE-001",
-  "services": [
-    {
-      "name": "wuauserv",
-      "display_name": "Windows Update",
-      "status": "running"
-    }
-  ],
-  "installed_apps": [
-    {
-      "display_name": "Microsoft Office",
-      "version": "16.0.0",
-      "publisher": "Microsoft Corporation"
-    }
-  ]
-}
-
-Response:
-{
-  "status": "success",
-  "inventory_id": "uuid"
-}
-```
-
-#### Get Device Commands
-```http
-GET /api/v1/commands?hostname=DEVICE-001
-Authorization: Bearer <token>
-
-Response:
-{
-  "commands": [
-    {
-      "command": "update",
-      "update_url": "https://server/media/updates/file.msi",
-      "sha256": "abc123...",
-      "signature": "def456..."
-    }
-  ]
-}
-```
-
-## Security Features
-
-### Encryption
-- **Database**: Fernet encryption for sensitive fields (tokens, keys)
-- **Transport**: HTTPS with TLS 1.2+
-- **Files**: Encrypted storage for update files
-
-### Authentication
-- **JWT**: Short-lived tokens (15 min) with refresh (7 days)
-- **RBAC**: Admin, Operator, Read-only roles
-- **MFA**: Optional TOTP support
-
-### Validation
-- **Input**: Django forms + DRF serializers
-- **File Upload**: Size limits, type validation, malware scanning
-- **API**: Rate limiting (10 req/min per IP)
-
-### Auditing
-- All actions logged with user, timestamp, IP
-- Failed authentication attempts tracked
-- Suspicious activity alerts
-
-## Configuration
-
-### Environment Variables
-Create `.env` file:
-```env
-SECRET_KEY=<django-secret-key>
-DEBUG=False
-ALLOWED_HOSTS=localhost,127.0.0.1
-DATABASE_URL=sqlite:///db.sqlite3
-REDIS_URL=redis://localhost:6379/0
-VIRUSTOTAL_API_KEY=<your-key>
-```
-
-### Admin Settings
-Access at `/admin/core/systemconfig/`:
-- Server URL
-- API keys (VirusTotal)
-- Update retention policy
-- Rate limiting thresholds
-
-## Building MSI Installer
-
-### Prerequisites
-- Python 3.11+
-- WiX Toolset 3.11+
-- PyInstaller
-
-### Build Steps
-```bash
-# 1. Freeze application
-cd installer
-python build_freeze.py
-
-# 2. Create MSI
-python build_msi.py
-
-# Output: dist/Kinetix-Setup.msi
-```
-
-See `installer/BUILD.md` for detailed instructions.
-
-## Development
-
-### Running Tests
-```bash
-python manage.py test
-```
-
-### Code Quality
-```bash
-# Linting
-flake8 .
-
-# Security scan
-bandit -r .
-
-# Type checking
-mypy .
-```
-
-### Database Migrations
-```bash
-python manage.py makemigrations
-python manage.py migrate
-```
-
-## Deployment
-
-### Production Checklist
-- [ ] Set `DEBUG=False`
-- [ ] Configure `ALLOWED_HOSTS`
-- [ ] Use strong `SECRET_KEY`
-- [ ] Enable HTTPS
-- [ ] Configure firewall
-- [ ] Set up backup strategy
-- [ ] Enable audit logging
-- [ ] Configure email alerts
-- [ ] Review security headers
-- [ ] Test disaster recovery
-
-## Troubleshooting
-
-### Common Issues
-
-**Q: Can't access server after installation**
-A: Check Windows Firewall, ensure port 8000 is open
-
-**Q: Update upload fails**
-A: Check file size limits in settings, verify disk space
-
-**Q: Device registration fails**
-A: Verify network connectivity, check JWT token expiry
-
-## Support
-- Documentation: `/docs/`
-- Issue Tracker: GitHub Issues
-- Email: support@example.com
-
-## License
-Proprietary - All Rights Reserved
-
-## Version
-1.0.0 (2026-01-18)
+## 🏷️ Version
+1.2.0 (January 2026) - *Remote Administration & Interactive Reboot Update*

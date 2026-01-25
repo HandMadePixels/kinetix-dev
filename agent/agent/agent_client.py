@@ -3,8 +3,8 @@ import json
 import time
 import os
 import sys
-from logger import agent_log
-from config import AgentConfig
+from agent_logger import agent_log
+from agent_config import AgentConfig
 
 class AgentClient:
     """Handles communication with the Kinetix API"""
@@ -162,3 +162,18 @@ class AgentClient:
                 time.sleep(2 ** i)
         
         return False
+
+    def send_command_status(self, command_id, status, message=None):
+        """Submit generic command status to server"""
+        url = f"{self.config.server_url}/api/v1/command-status/"
+        payload = {
+            "command_id": command_id,
+            "status": status,
+            "message": message or ""
+        }
+        try:
+            response = self.session.post(url, json=payload, headers=self._get_headers(), timeout=30)
+            return response.status_code in [200, 201]
+        except Exception as e:
+            agent_log.error(f"Error sending command status: {e}")
+            return False

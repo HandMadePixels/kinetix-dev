@@ -9,11 +9,11 @@ if not getattr(sys, 'frozen', False):
 
 import win32serviceutil
 import servicemanager
-from service import KinetixAgentService
-from logger import agent_log
-from config import AgentConfig
-from client import AgentClient
-from collector import InventoryCollector
+from agent_service import KinetixAgentService
+from agent_logger import agent_log
+from agent_config import AgentConfig
+from agent_client import AgentClient
+from agent_collector import InventoryCollector
 
 def print_help():
     print("""
@@ -68,9 +68,6 @@ if __name__ == '__main__':
             else:
                 print("Registration failed.")
         elif cmd == "inventory":
-            from config import AgentConfig
-            from client import AgentClient
-            from collector import InventoryCollector
             config = AgentConfig()
             client = AgentClient(config)
             coll = InventoryCollector()

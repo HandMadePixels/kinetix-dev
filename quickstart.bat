@@ -173,7 +173,7 @@ echo.
 echo NEXT STEPS:
 echo.
 echo 1. Start Services:
-echo    production_server.bat
+echo    run_dev.bat
 echo.
 echo 2. Access the application:
 echo    Web Interface: http://localhost:8000
@@ -181,8 +181,7 @@ echo    Admin Panel:   http://localhost:8000/admin
 echo.
 echo ============================================================================
 echo.
-echo TIP: Run 'production_server.bat' to start all services (excluding Redis) automatically
-echo 	  Use redis-server in cmd to run Redis Server (Will work only if set in environment variable)
+echo TIP: Run 'run_dev.bat' to start all services (including Redis) automatically
 echo.
 echo For more information, see QUICKSTART.md
 echo ============================================================================

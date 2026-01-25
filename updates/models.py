@@ -163,7 +163,11 @@ class UpdatePush(models.Model):
             models.Index(fields=['status', 'scheduled_at']),
             models.Index(fields=['device', 'status']),
         ]
-    
+        permissions = [
+            ("can_deploy_updates", "Can deploy software updates"),
+            ("can_retry_deployments", "Can retry failed deployments"),
+        ]
+
     def __str__(self):
         return f"{self.update.filename} -> {self.device.hostname} ({self.status})"
     

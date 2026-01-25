@@ -9,6 +9,8 @@ from api import views
 # Create router for viewsets
 router = DefaultRouter()
 router.register(r'devices', views.DeviceViewSet, basename='device')
+router.register(r'pushes', views.UpdatePushViewSet, basename='push')
+router.register(r'commands-history', views.RemoteCommandViewSet, basename='command-history')
 
 app_name = 'api'
 
@@ -20,6 +22,7 @@ urlpatterns = [
     path('updates/', views.UpdateUploadView.as_view(), name='update-upload'),
     path('updates/<uuid:pk>/', views.UpdateDetailView.as_view(), name='update-detail'),
     path('push-update/', views.PushUpdateView.as_view(), name='push-update'),
+    path('remote-command/', views.RemoteCommandActionView.as_view(), name='remote-command'),
     
     # Inventory submission
     path('inventory/', views.InventorySubmissionView.as_view(), name='inventory-submit'),
@@ -27,6 +30,7 @@ urlpatterns = [
     
     # Device commands (polled by agents)
     path('commands/', views.DeviceCommandsView.as_view(), name='device-commands'),
+    path('command-status/', views.RemoteCommandStatusView.as_view(), name='command-status'),
     path('update-status/', views.UpdateStatusView.as_view(), name='update-status'),
     path('push-status/', views.UpdateStatusPollView.as_view(), name='push-status'),
     

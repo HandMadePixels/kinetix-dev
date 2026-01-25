@@ -10,4 +10,7 @@ urlpatterns = [
     path('devices/', views.DeviceListView.as_view(), name='device_list'),
     path('applications/', views.ApplicationInventoryListView.as_view(), name='application_inventory'),
     path('devices/<uuid:pk>/inventory/', views.DeviceInventoryView.as_view(), name='device_inventory'),
+    path('logs/', views.AuditLogListView.as_view(), name='audit_logs'),
+    path('reports/deployments/', views.DeploymentReportListView.as_view(), name='deployment_report'),
+    path('reports/deployments/export/', views.DeploymentReportExportView.as_view(), name='deployment_report_export'),
 ]

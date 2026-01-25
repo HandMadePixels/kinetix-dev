@@ -125,20 +125,19 @@ def push_update_to_device(push_id):
         logger.info(f"Processing push: {push.update.filename} -> {push.device.hostname}")
         
         # Check if device is online
-        if not push.device.is_online():
-            logger.warning(f"Device offline: {push.device.hostname}")
-            push.mark_failed("Device offline")
-            return
+        is_online = push.device.is_online()
         
         # Update will be delivered when device polls /api/v1/commands
-        # This task just logs the push
+        # This task serves as a notification/audit point
+        
+        status_msg = "Device is online, waiting for next poll." if is_online else "Device is currently offline, will deliver when it reconnects."
         
         AuditLog.objects.create(
             device=push.device,
             ip_address='0.0.0.0',
             action='update_push',
             severity='info',
-            description=f"Update queued for delivery: {push.update.filename}",
+            description=f"Update queued for {push.device.hostname}. {status_msg}",
             resource_type='UpdatePush',
             resource_id=str(push.id)
         )

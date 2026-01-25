@@ -118,56 +118,6 @@
     </div>
 </div>
 
-<!-- Recent Logs -->
-<div class="row mt-4 mb-4">
-    <div class="col-md-12">
-        <div class="card shadow-sm">
-            <div class="card-header bg-transparent fw-bold d-flex justify-content-between align-items-center">
-                <span>Recent Audit Logs</span>
-                <small class="text-muted">Last 10 events</small>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0 align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th class="ps-4">Time</th>
-                                <th>Action</th>
-                                <th>Severity</th>
-                                <th>Description</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for log in recent_logs %}
-                            <tr>
-                                <td class="ps-4 text-nowrap">{{ log.timestamp|date:"M d, H:i" }}</td>
-                                <td>{{ log.action }}</td>
-                                <td>
-                                    {% if log.severity == 'error' %}
-                                    <span class="badge bg-danger rounded-pill">Error</span>
-                                    {% elif log.severity == 'warning' %}
-                                    <span class="badge bg-warning text-dark rounded-pill">Warning</span>
-                                    {% elif log.severity == 'critical' %}
-                                    <span class="badge bg-danger rounded-pill">CRITICAL</span>
-                                    {% else %}
-                                    <span class="badge bg-info text-dark rounded-pill">Info</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ log.description|truncatechars:100 }}</td>
-                            </tr>
-                            {% empty %}
-                            <tr>
-                                <td colspan="4" class="text-center py-4 text-muted">No logs found</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
 <!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 

@@ -120,8 +120,7 @@
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" name="target_hostnames"
                                     value="{{ device.hostname }}" id="dev_{{ device.id }}">
-                                <label class="form-check-label" for="dev_{{ device.id }}">{{ device.hostname }} ({{
-                                    device.ip_address }})</label>
+                                <label class="form-check-label" for="dev_{{ device.id }}">{{ device.hostname }} ({{ device.ip_address }})</label>
                             </div>
                             {% endfor %}
                         </div>
@@ -156,9 +155,14 @@
         <div class="card shadow-sm">
             <div class="card-header bg-transparent fw-bold d-flex justify-content-between align-items-center">
                 <span>Recent Deployments</span>
-                <button class="btn btn-sm btn-outline-primary" type="button" onclick="location.reload()">
-                    <i class="bi bi-arrow-clockwise"></i> Refresh
-                </button>
+                <div>
+                    <a href="{% url 'dashboard:deployment_report' %}" class="btn btn-sm btn-outline-info me-1">
+                        <i class="bi bi-file-earmark-bar-graph"></i> Full Report
+                    </a>
+                    <button class="btn btn-sm btn-outline-primary" type="button" onclick="location.reload()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
@@ -177,16 +181,20 @@
                                 data-status="{{ push.status }}">
                                 <td class="ps-3">
                                     <div class="fw-bold">{{ push.update.name }}</div>
-                                    <small class="text-muted">v{{ push.update.version }} ({{ push.update.filename
-                                        }})</small>
+                                    <small class="text-muted">v{{ push.update.version }} ({{ push.update.filename }})</small>
                                 </td>
-                                <td>{{ push.device.id }}</td>
+                                <td>{{ push.device.hostname }} ({{ push.device.ip_address }})</td>
                                 <td class="status-cell">
                                     {% if push.status == 'completed' %}
                                     <span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>
                                     {% elif push.status == 'failed' %}
                                     <span class="badge bg-danger" title="{{ push.error_message }}"><i
                                             class="bi bi-exclamation-triangle"></i> Failed</span>
+                                    {% if perms.updates.can_retry_deployments %}
+                                    <button class="btn btn-xs btn-outline-warning ms-1 retry-push" data-id="{{ push.id }}" title="Retry">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                    {% endif %}
                                     {% elif push.status == 'in_progress' %}
                                     <span class="badge bg-primary"><span class="spinner-border spinner-border-sm"
                                             role="status"></span> In Progress</span>
@@ -283,6 +291,30 @@
             pollingInterval = setInterval(updatePushStatus, 5000);
         }
 
+        // Handle Retry button
+        $(document).on('click', '.retry-push', function() {
+            const btn = $(this);
+            const pushId = btn.data('id');
+            const originalHtml = btn.html();
+
+            btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span>');
+
+            $.ajax({
+                url: `/api/v1/pushes/${pushId}/retry/`,
+                type: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                success: function() {
+                    location.reload();
+                },
+                error: function(xhr) {
+                    btn.prop('disabled', false).html(originalHtml);
+                    alert('Failed to retry deployment.');
+                }
+            });
+        });
+
         // Handle form submission
         $('#pushUpdateForm').submit(function (e) {
             e.preventDefault();
@@ -336,13 +368,14 @@
 
                     let errorMsg = 'Unknown error';
                     if (xhr.responseJSON) {
-                        if (typeof xhr.responseJSON.error === 'string') {
-                            errorMsg = xhr.responseJSON.error;
-                        } else if (typeof xhr.responseJSON.error === 'object') {
-                            const firstKey = Object.keys(xhr.responseJSON.error)[0];
-                            const firstVal = xhr.responseJSON.error[firstKey];
+                        const errors = xhr.responseJSON;
+                        if (typeof errors === 'string') {
+                            errorMsg = errors;
+                        } else if (typeof errors === 'object') {
+                            const firstKey = Object.keys(errors)[0];
+                            const firstVal = errors[firstKey];
                             errorMsg = Array.isArray(firstVal) ? firstVal[0] : JSON.stringify(firstVal);
-                            if (firstKey !== 'non_field_errors') {
+                            if (firstKey !== 'non_field_errors' && firstKey !== 'detail') {
                                 errorMsg = firstKey + ': ' + errorMsg;
                             }
                         }
@@ -381,8 +414,16 @@
                     let errorMsg = 'Upload failed';
                     if (xhr.responseJSON) {
                         const errors = xhr.responseJSON;
-                        const firstKey = Object.keys(errors)[0];
-                        errorMsg = firstKey + ': ' + (Array.isArray(errors[firstKey]) ? errors[firstKey][0] : JSON.stringify(errors[firstKey]));
+                        if (typeof errors === 'string') {
+                            errorMsg = errors;
+                        } else if (typeof errors === 'object') {
+                            const firstKey = Object.keys(errors)[0];
+                            const firstVal = errors[firstKey];
+                            errorMsg = Array.isArray(firstVal) ? firstVal[0] : JSON.stringify(firstVal);
+                            if (firstKey !== 'non_field_errors' && firstKey !== 'detail') {
+                                errorMsg = firstKey + ': ' + errorMsg;
+                            }
+                        }
                     }
                     alert('Error: ' + errorMsg);
                 }

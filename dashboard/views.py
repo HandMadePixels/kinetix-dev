@@ -1,7 +1,7 @@
 from django.views.generic import TemplateView, ListView, DetailView
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.views import LogoutView
-from django.db.models import Count, Max, Q
+from django.db.models import Count, Max, Q, OuterRef, Subquery
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
@@ -41,9 +41,6 @@ class DashboardIndexView(LoginRequiredMixin, TemplateView):
         context['pending_pushes'] = UpdatePush.objects.filter(status='pending').count()
         context['recent_updates'] = Update.objects.order_by('-uploaded_at')[:5]
         
-        # Recent Logs
-        context['recent_logs'] = AuditLog.objects.order_by('-timestamp')[:10]
-        
         # Device Status Chart
         online_count = context['online_devices']
         offline_count = context['total_devices'] - online_count
@@ -80,23 +77,32 @@ class DashboardIndexView(LoginRequiredMixin, TemplateView):
         
         return context
 
+class AuditLogListView(LoginRequiredMixin, ListView):
+    model = AuditLog
+    template_name = 'dashboard/audit_logs.html'
+    context_object_name = 'logs'
+    paginate_by = 50
+
+    def get_queryset(self):
+        return AuditLog.objects.select_related('user', 'device').order_by('-timestamp')
+
 class ApplicationInventoryListView(LoginRequiredMixin, ListView):
     model = ApplicationInventory
     template_name = 'dashboard/application_inventory.html'
     context_object_name = 'applications'
 
     def get_queryset(self):
-        # Get latest snapshot ID for each device
-        latest_snapshots = InventorySnapshot.objects.values('device').annotate(
-            latest_id=Max('id')
-        ).values_list('latest_id', flat=True)
-        
-        # Base queryset filtered to latest snapshots only
+        # Get all application records that belong to the latest snapshot of their respective device.
+        # We use snapshot__device to traverse the relationship from ApplicationInventory to Device.
         queryset = ApplicationInventory.objects.filter(
-            snapshot_id__in=latest_snapshots
+            snapshot_id=Subquery(
+                InventorySnapshot.objects.filter(
+                    device=OuterRef('snapshot__device')
+                ).order_by('-collected_at').values('id')[:1]
+            )
         )
 
-        # Apply search filter BEFORE grouping/aggregation
+        # Apply search filter
         query = self.request.GET.get('q')
         if query:
             queryset = queryset.filter(
@@ -151,9 +157,78 @@ class DeviceInventoryView(LoginRequiredMixin, DetailView):
         device = self.get_object()
         snapshot = InventorySnapshot.objects.filter(device=device).order_by('-collected_at').first()
         
+        context['snapshot'] = snapshot
         if snapshot:
-            context['snapshot'] = snapshot
             context['services'] = snapshot.services.all()
             context['applications'] = snapshot.applications.all()
+        else:
+            from inventory.models import ServiceInventory, ApplicationInventory
+            context['services'] = ServiceInventory.objects.none()
+            context['applications'] = ApplicationInventory.objects.none()
         
         return context
+
+class DeploymentReportListView(LoginRequiredMixin, ListView):
+    """View for detailed deployment reporting"""
+    model = UpdatePush
+    template_name = 'dashboard/deployment_report.html'
+    context_object_name = 'pushes'
+    paginate_by = 50
+
+    def get_queryset(self):
+        queryset = UpdatePush.objects.select_related('update', 'device').order_by('-scheduled_at')
+        
+        # Filtering
+        status = self.request.GET.get('status')
+        if status:
+            queryset = queryset.filter(status=status)
+            
+        update_id = self.request.GET.get('update_id')
+        if update_id:
+            queryset = queryset.filter(update_id=update_id)
+            
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['updates'] = Update.objects.all()
+        context['status_choices'] = UpdatePush.STATUS_CHOICES
+        return context
+
+class DeploymentReportExportView(LoginRequiredMixin, TemplateView):
+    """Export deployment report as CSV"""
+    def get(self, request, *args, **kwargs):
+        import csv
+        from django.http import HttpResponse
+        
+        # Get filtered queryset similar to ListView
+        queryset = UpdatePush.objects.select_related('update', 'device').order_by('-scheduled_at')
+        
+        status = request.GET.get('status')
+        if status:
+            queryset = queryset.filter(status=status)
+            
+        update_id = request.GET.get('update_id')
+        if update_id:
+            queryset = queryset.filter(update_id=update_id)
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="deployment_report_{timezone.now().strftime("%Y%m%d_%H%M")}.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(['Software Name', 'Version', 'Device Hostname', 'IP Address', 'Status', 'Scheduled At', 'Pushed At', 'Completed At', 'Error Message'])
+
+        for push in queryset:
+            writer.writerow([
+                push.update.name,
+                push.update.version,
+                push.device.hostname,
+                push.device.ip_address,
+                push.get_status_display(),
+                push.scheduled_at,
+                push.pushed_at or '',
+                push.completed_at or '',
+                push.error_message
+            ])
+
+        return response

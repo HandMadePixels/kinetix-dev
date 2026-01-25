@@ -45,10 +45,6 @@
                             </a>
                         </td>
                     </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="5" class="text-center py-5 text-muted">No application data collected yet.</td>
-                    </tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -63,6 +59,14 @@
         $('#globalAppsTable').DataTable({
             "pageLength": 50,
             "order": [[ 0, "asc" ]],
+            "retrieve": true,
+            "columns": [
+                null, // App Name
+                null, // Version
+                null, // Publisher
+                null, // Devices
+                { "orderable": false } // Actions
+            ],
             "language": {
                 "search": "Search applications/versions:"
             }

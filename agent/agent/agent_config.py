@@ -66,6 +66,11 @@ class AgentConfig:
     def poll_interval(self):
         return self.config.getint('Server', 'PollInterval')
 
+    @poll_interval.setter
+    def poll_interval(self, value):
+        self.config.set('Server', 'PollInterval', str(value))
+        self.save()
+
     @property
     def agent_id(self):
         return self.config.get('Agent', 'ID')
