@@ -1,5 +1,7 @@
 # Kinetix: Enterprise Endpoint Management
 
+![Logo](./logo/logo.png)
+
 ## Overview
 Kinetix is a professional-grade, Django-based endpoint management system designed for secure Windows update delivery, real-time device monitoring, and remote software management. It features a high-performance **pull-based architecture** where remote agents poll the command center for instructions, ensuring compatibility with strict corporate firewalls without compromising security.
 
