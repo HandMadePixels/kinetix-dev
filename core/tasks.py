@@ -206,3 +206,32 @@ def monitor_disk_space():
     
     except Exception as e:
         logger.error(f"Error monitoring disk space: {e}")
+
+
+@shared_task
+def async_log_event(user_id, device_id, ip_address, user_agent, action, severity, description, resource_type='', resource_id='', metadata=None):
+    """
+    Asynchronously create an audit log entry.
+    """
+    from core.models import AuditLog
+    from django.contrib.auth.models import User
+    from core.models import Device
+    
+    try:
+        user = User.objects.get(id=user_id) if user_id else None
+        device = Device.objects.get(id=device_id) if device_id else None
+        
+        AuditLog.objects.create(
+            user=user,
+            device=device,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            action=action,
+            severity=severity,
+            description=description,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            metadata=metadata or {}
+        )
+    except Exception as e:
+        logger.error(f"Error in async_log_event: {e}")

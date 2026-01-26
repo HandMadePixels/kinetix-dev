@@ -1,0 +1,585 @@
+{
+	"info": {
+		"name": "Kinetix API Collection",
+		"description": "Postman collection for Kinetix Endpoint Protection Platform. Covers Agent interactions and Dashboard/Admin operations. Base URL: {{base_url}}/api/v1",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "refresh_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "agent_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "device_uuid",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "hostname",
+			"value": "DESKTOP-TEST",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login (Admin)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set(\"access_token\", jsonData.access);",
+									"    pm.collectionVariables.set(\"refresh_token\", jsonData.refresh);",
+								"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"admin\",\n    \"password\": \"admin\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/token/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"token",
+								""
+							]
+						}
+					}
+				},
+				{
+					"name": "Refresh Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set(\"access_token\", jsonData.access);",
+								"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"refresh\": \"{{refresh_token}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/token/refresh/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"token",
+								"refresh",
+								""
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Device (Agent)",
+			"item": [
+				{
+					"name": "Register Device",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set(\"agent_token\", jsonData.token);",
+									"    pm.collectionVariables.set(\"device_uuid\", jsonData.device_id);",
+									"    pm.collectionVariables.set(\"hostname\", jsonData.hostname);",
+								"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"hardware_id\": \"HW-UUID-1234\",\n    \"hostname\": \"DESKTOP-TEST\",\n    \"ip_address\": \"192.168.1.15\",\n    \"mac_address\": \"00:11:22:33:44:55\",\n    \"os_version\": \"Windows 10 Pro\",\n    \"agent_version\": \"1.0.0\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/register/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"register",
+								""
+							]
+						}
+					}
+				},
+				{
+					"name": "Poll Commands (Heartbeat)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{agent_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/commands/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"commands",
+								""
+							]
+						},
+						"description": "Agent polls this endpoint. Updates heartbeat and receives pending commands."
+					}
+				},
+				{
+					"name": "Submit Inventory",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{agent_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"ip_address\": \"192.168.1.15\",\n    \"os_version\": \"Windows 10 Pro 22H2\",\n    \"current_user\": \"jdoe\",\n    \"last_boot_time\": \"2026-01-27T08:00:00Z\",\n    \"uptime\": 3600,\n    \"services\": [\n        {\"name\": \"Spooler\", \"display_name\": \"Print Spooler\", \"status\": \"running\"},\n        {\"name\": \"wuauserv\", \"display_name\": \"Windows Update\", \"status\": \"stopped\"}\n    ],\n    \"applications\": [\n        {\"display_name\": \"Google Chrome\", \"version\": \"120.0.6099.109\", \"publisher\": \"Google LLC\"},\n        {\"display_name\": \"Notepad++\", \"version\": \"8.6\", \"publisher\": \"Don Ho\"}\n    ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/inventory/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"inventory",
+								""
+							]
+						}
+					}
+				},
+				{
+					"name": "Report Command Status",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{agent_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"command_id\": 1,\n    \"status\": \"completed\",\n    \"message\": \"Command executed successfully.\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/command-status/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"command-status",
+								""
+							]
+						}
+					}
+				},
+				{
+					"name": "Report Update Status",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{agent_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"push_id\": 1,\n    \"status\": \"completed\",\n    \"error_message\": \"\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/update-status/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"update-status",
+								""
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Dashboard / Admin",
+			"item": [
+				{
+					"name": "Updates",
+					"item": [
+						{
+							"name": "Upload Update",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{access_token}}",
+										"type": "text"
+									}
+								],
+								"body": {
+								"mode": "formdata",
+								"formdata": [
+									{
+										"key": "file",
+										"type": "file",
+										"src": []
+									},
+									{
+										"key": "version",
+										"value": "2.0.0",
+										"type": "text"
+									},
+									{
+										"key": "description",
+										"value": "Security Patch",
+										"type": "text"
+									}
+								]
+								},
+							"url": {
+								"raw": "{{base_url}}/api/v1/updates/",
+								"host": [
+									"{{base_url}}"
+								],
+								"path": [
+									"api",
+									"v1",
+									"updates",
+									""
+							]
+							}
+						}
+						},
+						{
+							"name": "Deploy Update (Push)",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{access_token}}",
+										"type": "text"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"update_id\": \"UPDATE_UUID_HERE\",\n    \"target_hostnames\": [\"{{hostname}}\"],\n    \"push_to_all\": false,\n    \"scheduled_at\": \"2026-01-28T10:00:00Z\"\n}",
+								"options": {
+									"raw": {
+										"language": "json"
+									}
+								}
+							},
+							"url": {
+								"raw": "{{base_url}}/api/v1/push-update/",
+								"host": [
+									"{{base_url}}"
+								],
+								"path": [
+									"api",
+									"v1",
+									"push-update",
+									""
+							]
+							}
+						}
+						},
+						{
+							"name": "Poll Push Status",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{access_token}}",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/v1/push-status/?ids=1",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"v1",
+										"push-status",
+										""
+									],
+									"query": [
+										{
+											"key": "ids",
+											"value": "1"
+										}
+									]
+								}
+							}
+							},
+							{
+								"name": "Retry Push",
+								"request": {
+									"method": "POST",
+									"header": [
+										{
+											"key": "Authorization",
+											"value": "Bearer {{access_token}}",
+											"type": "text"
+										}
+									],
+									"url": {
+										"raw": "{{base_url}}/api/v1/pushes/1/retry/",
+										"host": [
+											"{{base_url}}"
+										],
+										"path": [
+											"api",
+											"v1",
+											"pushes",
+											"1",
+											"retry",
+											""
+										]
+									}
+							}
+						}
+					]
+				},
+				{
+					"name": "Remote Commands",
+					"item": [
+						{
+							"name": "Queue Command (Shell)",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{access_token}}",
+										"type": "text"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"device_id\": \"{{device_uuid}}\",\n    \"command_type\": \"shell\",\n    \"payload\": \"dir C:\\ \"\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{base_url}}/api/v1/remote-command/",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"v1",
+										"remote-command",
+										""
+									]
+								}
+							}
+							},
+							{
+								"name": "List Command History",
+								"request": {
+									"method": "GET",
+									"header": [
+										{
+											"key": "Authorization",
+											"value": "Bearer {{access_token}}",
+											"type": "text"
+										}
+									],
+									"url": {
+										"raw": "{{base_url}}/api/v1/commands-history/?device={{device_uuid}}",
+										"host": [
+											"{{base_url}}"
+										],
+										"path": [
+											"api",
+											"v1",
+											"commands-history",
+											""
+										],
+										"query": [
+											{
+												"key": "device",
+												"value": "{{device_uuid}}"
+											}
+										]
+									}
+								}
+							}
+					]
+				},
+				{
+					"name": "Inventory",
+					"item": [
+						{
+							"name": "Get Device Inventory",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{access_token}}",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/v1/inventory/{{hostname}}/",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"v1",
+										"inventory",
+										"{{hostname}}",
+										""
+									]
+								}
+							}
+						},
+						{
+							"name": "Audit Logs",
+							"item": [
+								{
+									"name": "List Audit Logs",
+									"request": {
+										"method": "GET",
+										"header": [
+											{
+												"key": "Authorization",
+												"value": "Bearer {{access_token}}",
+												"type": "text"
+											}
+										],
+										"url": {
+											"raw": "{{base_url}}/api/v1/audit-logs/",
+											"host": [
+												"{{base_url}}"
+											],
+											"path": [
+												"api",
+												"v1",
+												"audit-logs",
+												""
+											]
+										}
+									}
+							]
+						}
+				]
+			}
+		]
+	}
+}

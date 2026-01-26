@@ -5,7 +5,9 @@ This document provides a comprehensive security review, STRIDE threat model, and
 ---
 
 ## 1. Executive Summary
-Kinetix is designed with a "Security-First" architecture. It employs industry-standard cryptographic primitives, robust authentication mechanisms, and proactive defense strategies. The pull-based architecture minimizes the attack surface by avoiding the need for open inbound ports on client devices. **v1.4.0 update: Enhanced asynchronous audit logging and session-interactive bypass hardening.**
+Kinetix is designed with a "Security-First" architecture. It employs industry-standard cryptographic primitives, robust authentication mechanisms, and proactive defense strategies. The pull-based architecture minimizes the attack surface by avoiding the need for open inbound ports on client devices. 
+
+**v1.3.0 update:** Enhanced asynchronous audit logging, session-interactive bypass hardening, and persistent agent authentication.
 
 ---
 
@@ -13,8 +15,9 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 
 ### 🔑 Authentication & Authorization
 - **Multi-Model Authentication**: Uses `DeviceJWTAuthentication` for agents and standard Session/JWT for administrators.
-- **JWT Implementation**: Short-lived (15m) access tokens with 7-day refresh tokens. Token rotation and blacklisting are enabled.
-- **Granular Permissions**: Custom Django permissions (`can_execute_shell`, `can_control_services`, etc.) ensure the Principle of Least Privilege is enforced in the Command Center.
+- **JWT Implementation**: Short-lived (15m) access tokens with 7-day refresh tokens.
+- **Persistent Agent Auth**: The system stores encrypted **Refresh Tokens** in the database to ensure agents can maintain connectivity without frequent re-registration.
+- **Granular Permissions**: Custom Django permissions (`can_execute_shell`, `can_control_services`, etc.) ensure the Principle of Least Privilege is enforced.
 
 ### 🔐 Cryptography
 - **Update Signing**: RSA-4096 with PSS padding and SHA-256 ensures non-repudiation and integrity of deployed software.
@@ -49,7 +52,7 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 | **Remote Shell Abuse** | Low | Critical | **High** | **Mitigated**: Requires specific `can_execute_shell` permission; fully logged in audit trail. |
 | **Insecure Update Delivery** | Very Low | Critical | **Medium** | **Mitigated**: RSA-4096 signing prevents unauthorized software execution. |
 | **Credential Exposure in Logs** | Medium | Medium | **Medium** | **Mitigated**: `custom_exception_handler` masks sensitive data; Fernet encryption for fields. |
-| **Session 0 Isolation Issues** | Low | Low | **Low** | **Fixed**: Used `schtasks` with `/ru INTERACTIVE` to correctly bridge interactive sessions. |
+| **Token Expiry DoS** | Low | Medium | **Low** | **Fixed**: Switched to storing Refresh Tokens in database for persistent agent auth. |
 | **CSRF on Dashboard** | Low | High | **Medium** | **Mitigated**: `CsrfViewMiddleware` enabled; `Strict` cookie policies; meta-tag fallback for AJAX. |
 
 ---
@@ -59,12 +62,12 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 ### Short-Term
 1. **Enable HTTPS**: Transition from HTTP to HTTPS for all production deployments.
 2. **Rotate Keys**: Regularly rotate the `ENCRYPTION_KEY` and RSA Keypair.
-3. **API Key Scoping**: Ensure VirusTotal API keys have the minimum necessary permissions.
+3. **MFA Enforcement**: Implement Multi-Factor Authentication for Dashboard administrator logins.
 
 ### Long-Term
 1. **Hardware Security**: Support for TPM-backed storage of agent private keys.
 2. **IP Whitelisting**: Restrict access to the Command Center to specific VPN/Management subnets.
-3. **2FA/MFA**: Implement Multi-Factor Authentication for Dashboard administrator logins.
+3. **PostgreSQL Migration**: Move from SQLite to PostgreSQL for better concurrency and row-level security.
 
 ---
 
@@ -72,13 +75,13 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 
 ### 🛡️ Strengths
 - **Safe Defaults**: `DEBUG=False` by default in production.
-- **Secure Handling of Secrets**: Use of `python-decouple` for environment variables and `keyring` for agent secrets.
-- **Strong Hashing**: Use of SHA-256 for file integrity checks.
 - **Thread Safety**: Agent uses multithreading for commands to maintain service responsiveness.
+- **Secure Handling of Secrets**: Use of `python-decouple` for environment variables and `keyring` for agent secrets.
+- **Robust Field Serialization**: Use of `DjangoJSONEncoder` for automatic UUID and datetime serialization in Audit Logs.
 
 ### ⚠️ Areas for Improvement
-- **Shell Command Output**: Currently returns raw shell output. For extreme security environments, consider filtering or truncating very large outputs to prevent DoS via log-filling.
-- **Process Quoting**: (Improved) Previously identified issues with `schtasks` path quoting have been resolved using triple-quoting and batch wrappers.
+- **Shell Command Output**: Currently returns raw shell output. Large outputs could potentially cause DoS via log-filling.
+- **IP Trust**: Currently trusts `X-Forwarded-For` for auditing. In environments with load balancers, a trusted proxy list should be enforced.
 
 ---
 **Security Status: HARDENED**

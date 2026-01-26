@@ -86,8 +86,8 @@ class DeviceRegistrationSerializer(serializers.Serializer):
         refresh = RefreshToken.for_user(device)
         access_token = str(refresh.access_token)
         
-        # Store encrypted token
-        device.auth_token = access_token
+        # Store encrypted refresh token for persistence
+        device.auth_token = str(refresh)
         device.save()
         
         # Get public key for signature verification
