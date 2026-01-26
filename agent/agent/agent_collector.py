@@ -38,36 +38,79 @@ class InventoryCollector:
     def get_logged_in_user():
         """Retrieve currently logged in user on Windows"""
         try:
-            import wmi
-            c = wmi.WMI()
-            # This gets the console user
-            for user in c.Win32_ComputerSystem():
-                return user.UserName
+            # Method 1: psutil (usually more reliable for interactive users)
+            import psutil
+            users = psutil.users()
+            for user in users:
+                if user.name:
+                    return user.name
         except:
-            # Fallback to environment variables if WMI fails
-            import os
-            user = os.environ.get('USERNAME')
-            domain = os.environ.get('USERDOMAIN')
-            if user and domain:
-                return f"{domain}\\{user}"
-            return user or "Unknown"
+            pass
+
+        try:
+            # Method 2: WMI
+            import wmi
+            import pythoncom
+            pythoncom.CoInitialize()
+            c = wmi.WMI()
+            for user in c.Win32_ComputerSystem():
+                if user.UserName:
+                    return user.UserName
+        except:
+            pass
+            
+        # Fallback to environment variables
+        import os
+        user = os.environ.get('USERNAME')
+        domain = os.environ.get('USERDOMAIN')
+        if user and domain:
+            return f"{domain}\\{user}"
+        return user or "Unknown"
 
     @staticmethod
     def get_uptime_info():
-        """Retrieve last boot time and calculate uptime using WMI"""
+        """Retrieve last boot time and calculate uptime with multiple fallbacks"""
+        import datetime
+        
+        # Helper to make datetime timezone-aware (UTC)
+        def make_aware(dt):
+            if dt is None: return None
+            if dt.tzinfo is not None: return dt
+            return dt.replace(tzinfo=datetime.timezone.utc)
+
+        # Method 1: psutil (Recommended)
+        try:
+            import psutil
+            boot_timestamp = psutil.boot_time()
+            boot_dt = datetime.datetime.fromtimestamp(boot_timestamp, tz=datetime.timezone.utc)
+            
+            now = datetime.datetime.now(datetime.timezone.utc)
+            delta = now - boot_dt
+            
+            days = delta.days
+            hours, remainder = divmod(delta.seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+            
+            uptime_str = f"{days}d {hours}h {minutes}m"
+            return boot_dt.isoformat(), uptime_str
+        except Exception as e:
+            agent_log.warning(f"psutil uptime method failed: {e}")
+
+        # Method 2: WMI
         try:
             import wmi
-            import datetime
+            import pythoncom
+            pythoncom.CoInitialize()
             c = wmi.WMI()
-            for os in c.Win32_OperatingSystem():
+            for os_obj in c.Win32_OperatingSystem():
                 # Format: 20260122110924.500000+330
-                boot_str = os.LastBootUpTime.split('.')[0]
-                boot_dt = datetime.datetime.strptime(boot_str, "%Y%m%d%H%M%S")
+                boot_str = os_obj.LastBootUpTime.split('.')[0]
+                boot_dt_naive = datetime.datetime.strptime(boot_str, "%Y%m%d%H%M%S")
+                boot_dt = make_aware(boot_dt_naive)
                 
-                now = datetime.datetime.now()
+                now = datetime.datetime.now(datetime.timezone.utc)
                 delta = now - boot_dt
                 
-                # Format uptime string
                 days = delta.days
                 hours, remainder = divmod(delta.seconds, 3600)
                 minutes, _ = divmod(remainder, 60)
@@ -75,7 +118,27 @@ class InventoryCollector:
                 uptime_str = f"{days}d {hours}h {minutes}m"
                 return boot_dt.isoformat(), uptime_str
         except Exception as e:
-            agent_log.error(f"Failed to get uptime: {e}")
+            agent_log.warning(f"WMI uptime method failed: {e}")
+            
+        # Method 3: ctypes (Direct Windows API call - Very reliable fallback)
+        try:
+            import ctypes
+            # kernel32.GetTickCount64 returns milliseconds since boot
+            lib = ctypes.windll.kernel32
+            millis = lib.GetTickCount64()
+            seconds = millis // 1000
+            
+            days = seconds // 86400
+            hours = (seconds % 86400) // 3600
+            minutes = (seconds % 3600) // 60
+            
+            uptime_str = f"{days}d {hours}h {minutes}m"
+            
+            # Estimate boot time (UTC)
+            boot_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=seconds)
+            return boot_dt.isoformat(), uptime_str
+        except Exception as e:
+            agent_log.error(f"Failed to get uptime with all methods (psutil, WMI, ctypes): {e}")
             return None, "Unknown"
 
     @staticmethod
@@ -94,6 +157,36 @@ class InventoryCollector:
             statuses = win32service.EnumServicesStatusEx(hscm, type_filter, state_filter)
             
             for status in statuses:
+                svc_name = status.get('ServiceName', '')
+                
+                # Get more details for each service to get startup type
+                startup_type = "unknown"
+                try:
+                    hsvc = win32service.OpenService(hscm, svc_name, win32service.SERVICE_QUERY_CONFIG)
+                    config = win32service.QueryServiceConfig(hsvc)
+                    # Mapping: 2=Auto, 3=Manual, 4=Disabled, 0=Boot, 1=System
+                    type_map_startup = {
+                        win32service.SERVICE_AUTO_START: "Automatic",
+                        win32service.SERVICE_DEMAND_START: "Manual",
+                        win32service.SERVICE_DISABLED: "Disabled",
+                        win32service.SERVICE_BOOT_START: "Boot",
+                        win32service.SERVICE_SYSTEM_START: "System"
+                    }
+                    startup_type = type_map_startup.get(config[1], "unknown")
+                    
+                    # Check for Delayed Start if it's Automatic
+                    if config[1] == win32service.SERVICE_AUTO_START:
+                        try:
+                            delayed_info = win32service.QueryServiceConfig2(hsvc, win32service.SERVICE_CONFIG_DELAYED_AUTO_START_INFO)
+                            if delayed_info:
+                                startup_type = "Automatic (Delayed Start)"
+                        except:
+                            pass
+                            
+                    win32service.CloseServiceHandle(hsvc)
+                except:
+                    pass
+
                 # Map state to string (matching inventory.ServiceInventory choices)
                 state_map = {
                     1: "stopped",
@@ -105,9 +198,10 @@ class InventoryCollector:
                     7: "paused"
                 }
                 services.append({
-                    "name": status.get('ServiceName', ''),
+                    "name": svc_name,
                     "display_name": status.get('DisplayName', ''),
-                    "status": state_map.get(status.get('CurrentState'), "unknown")
+                    "status": state_map.get(status.get('CurrentState'), "unknown"),
+                    "startup_type": startup_type
                 })
             
             win32service.CloseServiceHandle(hscm)
@@ -181,6 +275,56 @@ class InventoryCollector:
         unique_apps = {f"{a['display_name']}-{a['version']}": a for a in apps}.values()
         return list(unique_apps)
 
+    @staticmethod
+    def collect_windows_updates():
+        """Retrieve Windows Update history (KBs)"""
+        updates = []
+        try:
+            import win32com.client
+            import pythoncom
+            import re
+            
+            pythoncom.CoInitialize()
+            session = win32com.client.Dispatch("Microsoft.Update.Session")
+            searcher = session.CreateUpdateSearcher()
+            
+            # Get total history count
+            count = searcher.GetTotalHistoryCount()
+            if count == 0:
+                return []
+                
+            # Query history (get last 50 updates for performance)
+            start_index = max(0, count - 50)
+            history = searcher.QueryHistory(start_index, 50)
+            
+            for item in history:
+                title = str(item.Title)
+                # Extract KB ID using regex (e.g., KB5034441)
+                kb_match = re.search(r'(KB\d+)', title)
+                kb_id = kb_match.group(1) if kb_match else ""
+                
+                # Convert pywintypes.datetime to isoformat
+                # item.Date is a pywintypes.datetime which behaves like datetime but might need conversion
+                installed_at = str(item.Date)
+                try:
+                    # Usually it's already in a good string format or can be converted
+                    # Format: 2024-01-26 12:34:56+00:00
+                    pass
+                except:
+                    installed_at = None
+
+                updates.append({
+                    "title": title[:500],
+                    "kb_id": kb_id,
+                    "installed_at": installed_at,
+                    "description": str(item.Description)[:1000] if hasattr(item, 'Description') else "",
+                    "support_url": str(item.SupportUrl)[:500] if hasattr(item, 'SupportUrl') else ""
+                })
+        except Exception as e:
+            agent_log.error(f"Failed to collect Windows Updates: {e}")
+            
+        return updates
+
     def collect_full_inventory(self):
         """Prepare complete inventory payload"""
         info = self.get_system_info()
@@ -193,5 +337,6 @@ class InventoryCollector:
             "last_boot_time": boot_time,
             "uptime": uptime,
             "services": self.collect_services(),
-            "installed_apps": self.collect_applications()
+            "installed_apps": self.collect_applications(),
+            "windows_updates": self.collect_windows_updates()
         }

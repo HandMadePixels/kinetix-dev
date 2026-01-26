@@ -4,8 +4,9 @@ DRF Serializers for API endpoints
 
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from django.db.models import Count
 from core.models import Device, DeviceGroup, AuditLog, RemoteCommand
-from inventory.models import ServiceInventory, ApplicationInventory
+from inventory.models import ServiceInventory, ApplicationInventory, WindowsUpdate
 from updates.models import Update, UpdatePush
 
 
@@ -14,6 +15,7 @@ class DeviceSerializer(serializers.ModelSerializer):
     
     is_online = serializers.SerializerMethodField()
     group_name = serializers.CharField(source='group.name', read_only=True, allow_null=True)
+    group = serializers.PrimaryKeyRelatedField(queryset=DeviceGroup.objects.all(), required=False, allow_null=True)
     
     class Meta:
         model = Device
@@ -24,6 +26,17 @@ class DeviceSerializer(serializers.ModelSerializer):
             'last_boot_time', 'uptime'
         ]
         read_only_fields = ['id', 'registered_at', 'last_seen', 'last_ip']
+        # Ensure hostname uniqueness doesn't block updates of the same record
+        extra_kwargs = {
+            'hostname': {'validators': []} 
+        }
+
+    def validate_hostname(self, value):
+        """Custom validation for hostname uniqueness"""
+        instance = getattr(self, 'instance', None)
+        if Device.objects.filter(hostname=value).exclude(pk=instance.pk if instance else None).exists():
+            raise serializers.ValidationError("A device with this hostname already exists.")
+        return value
     
     def get_is_online(self, obj):
         return obj.is_online()
@@ -93,7 +106,7 @@ class ServiceInventorySerializer(serializers.ModelSerializer):
     
     class Meta:
         model = ServiceInventory
-        fields = ['name', 'display_name', 'status']
+        fields = ['name', 'display_name', 'status', 'startup_type']
 
 
 class ApplicationInventorySerializer(serializers.ModelSerializer):
@@ -104,11 +117,20 @@ class ApplicationInventorySerializer(serializers.ModelSerializer):
         fields = ['display_name', 'version', 'publisher', 'uninstall_string']
 
 
+class WindowsUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for OS-level updates"""
+    
+    class Meta:
+        model = WindowsUpdate
+        fields = ['title', 'kb_id', 'installed_at', 'description', 'support_url']
+
+
 class InventorySubmissionSerializer(serializers.Serializer):
     """Serializer for inventory submission from devices"""
     
     services = ServiceInventorySerializer(many=True)
     installed_apps = ApplicationInventorySerializer(many=True)
+    windows_updates = WindowsUpdateSerializer(many=True, required=False, default=list)
     ip_address = serializers.IPAddressField(required=False)
     os_version = serializers.CharField(required=False, max_length=255)
     current_user = serializers.CharField(required=False, max_length=255, allow_null=True)
@@ -116,7 +138,7 @@ class InventorySubmissionSerializer(serializers.Serializer):
     uptime = serializers.CharField(required=False, max_length=100, allow_null=True)
     
     def create(self, validated_data):
-        """Store inventory data"""
+        """Store inventory data and prune old snapshots"""
         from inventory.models import InventorySnapshot
         
         device = self.context.get('device')
@@ -125,6 +147,12 @@ class InventorySubmissionSerializer(serializers.Serializer):
             hostname = self.initial_data.get('hostname')
             device = Device.objects.get(hostname=hostname)
         
+        # Prune old snapshots before creating a new one
+        # We keep the last 2 snapshots so that with the new one we have at most 3
+        old_snapshots = InventorySnapshot.objects.filter(device=device).order_by('-collected_at')[2:]
+        for old_snap in old_snapshots:
+            old_snap.delete()
+
         # Create snapshot
         snapshot = InventorySnapshot.objects.create(device=device)
         
@@ -141,6 +169,13 @@ class InventorySubmissionSerializer(serializers.Serializer):
             for app_data in validated_data['installed_apps']
         ]
         ApplicationInventory.objects.bulk_create(app_objs)
+        
+        # Create windows update records using bulk_create
+        update_objs = [
+            WindowsUpdate(snapshot=snapshot, **update_data)
+            for update_data in validated_data.get('windows_updates', [])
+        ]
+        WindowsUpdate.objects.bulk_create(update_objs)
         
         return snapshot
 
@@ -295,8 +330,13 @@ class PushUpdateSerializer(serializers.Serializer):
             
             group_ids = validated_data.get('group_ids', [])
             if group_ids:
+                # Filter groups that have at least 1 device
+                valid_groups = DeviceGroup.objects.filter(id__in=group_ids).annotate(
+                    num_devices=Count('devices')
+                ).filter(num_devices__gte=1)
+                
                 device_ids.update(Device.objects.filter(
-                    group__id__in=group_ids
+                    group__in=valid_groups
                 ).values_list('id', flat=True))
         
         devices = Device.objects.filter(id__in=device_ids)

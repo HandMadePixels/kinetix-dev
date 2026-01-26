@@ -106,9 +106,36 @@ class DeviceViewSet(viewsets.ModelViewSet):
             
         device = self.get_object()
         device.refresh_inventory_requested = True
-        device.save(update_fields=['refresh_inventory_requested'])
+        device.inventory_refresh_status = 'requested'
+        device.save(update_fields=['refresh_inventory_requested', 'inventory_refresh_status'])
         
         return Response({'status': 'refresh_requested'})
+
+    @action(detail=False, methods=['post'])
+    def request_refresh_all(self, request):
+        """Request a forced inventory refresh from ALL active devices"""
+        if not request.user.has_perm('core.can_request_refresh'):
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            
+        devices = Device.objects.filter(status='active')
+        count = devices.count()
+        
+        devices.update(
+            refresh_inventory_requested=True,
+            inventory_refresh_status='requested'
+        )
+        
+        AuditLog.objects.create(
+            user=request.user,
+            ip_address=self.get_client_ip(),
+            action='device_update',
+            severity='info',
+            description=f"Mass inventory refresh requested for {count} devices",
+            resource_type='Device',
+            resource_id='all'
+        )
+        
+        return Response({'status': 'mass_refresh_requested', 'count': count})
     
     @action(detail=True, methods=['post'])
     def deactivate(self, request, pk=None):
@@ -129,6 +156,40 @@ class DeviceViewSet(viewsets.ModelViewSet):
         )
         
         return Response({'status': 'deactivated'})
+
+    def perform_update(self, serializer):
+        """Enforce permission and log audit for device updates"""
+        if not self.request.user.has_perm('core.change_device'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You do not have permission to edit devices.")
+            
+        instance = serializer.save()
+        
+        # Prepare serializable metadata
+        # serializer.data might contain UUIDs or other non-JSON types depending on setup
+        try:
+            # Convert UUIDs to strings for JSON serialization
+            log_metadata = {
+                'hostname': instance.hostname,
+                'status': instance.status,
+                'group': str(instance.group.id) if instance.group else None,
+                'notes': instance.notes
+            }
+        except:
+            log_metadata = {'info': 'Metadata serialization failed'}
+
+        # Log the update
+        AuditLog.objects.create(
+            user=self.request.user if self.request.user.is_authenticated else None,
+            device=instance,
+            ip_address=self.get_client_ip(),
+            action='device_update',
+            severity='info',
+            description=f"Device updated: {instance.hostname}",
+            resource_type='Device',
+            resource_id=str(instance.id),
+            metadata=log_metadata
+        )
 
     def destroy(self, request, *args, **kwargs):
         """Permanently delete a device and its history"""
@@ -248,7 +309,7 @@ class PushUpdateView(generics.CreateAPIView):
             metadata={
                 'target_count': len(push_records),
                 'target_hostnames': serializer.validated_data.get('target_hostnames', []),
-                'group_ids': serializer.validated_data.get('group_ids', []),
+                'group_ids': [str(gid) for gid in serializer.validated_data.get('group_ids', [])],
                 'push_to_all': serializer.validated_data.get('push_to_all', False)
             }
         )
@@ -312,6 +373,10 @@ class InventorySubmissionView(generics.CreateAPIView):
             device.uptime = uptime
             update_fields.append('uptime')
             
+        # Reset inventory refresh status
+        device.inventory_refresh_status = 'idle'
+        update_fields.append('inventory_refresh_status')
+
         if update_fields:
             device.save(update_fields=update_fields)
 
@@ -432,7 +497,8 @@ class DeviceCommandsView(generics.GenericAPIView):
                 'description': 'Forced inventory refresh'
             })
             device.refresh_inventory_requested = False
-            device.save(update_fields=['refresh_inventory_requested'])
+            device.inventory_refresh_status = 'processing'
+            device.save(update_fields=['refresh_inventory_requested', 'inventory_refresh_status'])
 
         for push in pending_pushes:
             commands.append({
@@ -598,6 +664,21 @@ class UpdateStatusPollView(generics.ListAPIView):
             ip = self.request.META.get('REMOTE_ADDR', '0.0.0.0')
         return ip
 
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for viewing audit logs"""
+    queryset = AuditLog.objects.all()
+    serializer_class = AuditLogSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['action', 'severity', 'resource_type', 'resource_id', 'device', 'user']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        resource_type = self.request.query_params.get('resource_type')
+        resource_id = self.request.query_params.get('resource_id')
+        if resource_type and resource_id:
+            queryset = queryset.filter(resource_type=resource_type, resource_id=resource_id)
+        return queryset.order_by('-timestamp')
+
 class RemoteCommandStatusView(generics.GenericAPIView):
     """Agents report result of a generic remote command"""
     permission_classes = [IsAuthenticated]
@@ -627,8 +708,10 @@ class RemoteCommandActionView(generics.GenericAPIView):
         # Check specific permissions based on command type
         perm_map = {
             'reboot': 'core.can_trigger_reboot',
+            'restart_agent': 'core.can_trigger_reboot',
             'registry': 'core.can_manage_registry',
             'service_control': 'core.can_control_services',
+            'service_config': 'core.can_control_services',
             'uninstall': 'core.can_uninstall_apps',
             'shell': 'core.can_execute_shell'
         }

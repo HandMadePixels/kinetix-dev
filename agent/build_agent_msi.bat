@@ -58,7 +58,7 @@ echo [3/3] Compiling MSI with WiX...
 cd installer
 
 echo Running Candle...
-"!WIX_PATH!candle.exe" product.wxs -o product.wixobj
+"!WIX_PATH!candle.exe" -ext WixUtilExtension product.wxs -o product.wixobj
 if %errorlevel% neq 0 (
     echo [ERROR] WiX Compilation Candle failed.
     pause
@@ -66,7 +66,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Running Light...
-"!WIX_PATH!light.exe" product.wixobj -o kinetix_agent.msi
+"!WIX_PATH!light.exe" -ext WixUtilExtension product.wixobj -o kinetix_agent.msi
 if %errorlevel% neq 0 (
     echo [ERROR] WiX Linking Light failed.
     pause

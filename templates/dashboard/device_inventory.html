@@ -34,8 +34,13 @@
             <i class="bi bi-trash"></i> Delete Device
         </button>
         {% endif %}
-        <span class="badge bg-info p-2">OS: {{ device.os_version }}</span>
-        <span class="badge bg-dark p-2">IP: {{ device.ip_address }}</span>
+        <div class="mt-2">
+            <span class="badge bg-secondary p-2"><i class="bi bi-person"></i> {{ device.current_user|default:"None" }}</span>
+            <span class="badge bg-info p-2"><i class="bi bi-laptop"></i> {{ device.os_version }}</span>
+            <span class="badge bg-dark p-2"><i class="bi bi-hdd-network"></i> {{ device.ip_address }}</span>
+            <span class="badge bg-primary p-2"><i class="bi bi-clock-history"></i> Uptime: {{ device.uptime|default:"Unknown" }}</span>
+            <span class="badge bg-warning text-dark p-2"><i class="bi bi-power"></i> Boot: {{ device.last_boot_time|date:"Y-m-d H:i"|default:"Unknown" }}</span>
+        </div>
     </div>
 </div>
 
@@ -63,13 +68,25 @@
     <li class="nav-item" role="presentation">
         <button class="nav-link active" id="apps-tab" data-bs-toggle="tab" data-bs-target="#apps" type="button"
             role="tab">
-            Installed Applications ({{ applications.count }})
+            Installed Applications ({{ snapshot.applications.count|default:0 }})
         </button>
     </li>
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="services-tab" data-bs-toggle="tab" data-bs-target="#services" type="button"
             role="tab">
-            Windows Services ({{ services.count }})
+            Windows Services ({{ snapshot.services.count|default:0 }})
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="deployments-tab" data-bs-toggle="tab" data-bs-target="#deployments" type="button"
+            role="tab">
+            <i class="bi bi-cloud-arrow-up"></i> Kinetix Deployments ({{ update_pushes.count|default:0 }})
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="os-updates-tab" data-bs-toggle="tab" data-bs-target="#os-updates" type="button"
+            role="tab">
+            <i class="bi bi-microsoft"></i> Windows Updates ({{ reported_updates.count|default:0 }})
         </button>
     </li>
     {% if perms.core.can_manage_registry or perms.core.can_trigger_reboot %}
@@ -138,6 +155,7 @@
                             <tr>
                                 <th class="ps-4">Service Name</th>
                                 <th>Display Name</th>
+                                <th>Startup</th>
                                 <th>Status</th>
                                 <th class="text-end pe-4">Actions</th>
                             </tr>
@@ -147,6 +165,7 @@
                             <tr>
                                 <td class="ps-4 text-primary"><code>{{ service.name }}</code></td>
                                 <td>{{ service.display_name }}</td>
+                                <td class="small">{{ service.startup_type|default:"-" }}</td>
                                 <td>
                                     {% if service.status == 'running' %}
                                     <span class="badge bg-success">Running</span>
@@ -159,22 +178,132 @@
                                 <td class="text-end pe-4">
                                     <div class="btn-group">
                                         {% if perms.core.can_control_services %}
+                                            <!-- Start/Stop/Restart -->
                                             {% if service.status == 'stopped' %}
                                             <button class="btn btn-sm btn-outline-success service-action" 
                                                     data-name="{{ service.name }}" data-action="start" title="Start Service">
-                                                <i class="bi bi-play-fill"></i> Start
+                                                <i class="bi bi-play-fill"></i>
                                             </button>
                                             {% elif service.status == 'running' %}
                                             <button class="btn btn-sm btn-outline-danger service-action" 
                                                     data-name="{{ service.name }}" data-action="stop" title="Stop Service">
-                                                <i class="bi bi-stop-fill"></i> Stop
+                                                <i class="bi bi-stop-fill"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-warning service-action" 
+                                                    data-name="{{ service.name }}" data-action="restart" title="Restart Service">
+                                                <i class="bi bi-arrow-clockwise"></i>
                                             </button>
                                             {% endif %}
+
+                                            <!-- Startup Configuration -->
+                                            <div class="btn-group ms-1">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+                                                    <i class="bi bi-gear"></i>
+                                                </button>
+                                                <ul class="dropdown-menu dropdown-menu-end">
+                                                    <li><h6 class="dropdown-header">Set Startup Type</h6></li>
+                                                    <li><a class="dropdown-item service-config" href="#" data-name="{{ service.name }}" data-type="automatic">Automatic</a></li>
+                                                    <li><a class="dropdown-item service-config" href="#" data-name="{{ service.name }}" data-type="delayed">Automatic (Delayed)</a></li>
+                                                    <li><a class="dropdown-item service-config" href="#" data-name="{{ service.name }}" data-type="manual">Manual</a></li>
+                                                    <li><hr class="dropdown-divider"></li>
+                                                    <li><a class="dropdown-item service-config text-danger" href="#" data-name="{{ service.name }}" data-type="disabled">Disable Service</a></li>
+                                                </ul>
+                                            </div>
                                         {% else %}
                                             <span class="text-muted small">Restricted</span>
                                         {% endif %}
                                     </div>
                                 </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Kinetix Deployments Tab -->
+    <div class="tab-pane fade" id="deployments" role="tabpanel">
+        <div class="card shadow-sm">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table id="historyTable" class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-4">Software Name</th>
+                                <th>Version</th>
+                                <th>Status</th>
+                                <th>Scheduled At</th>
+                                <th class="text-end pe-4">Completed At</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for push in update_pushes %}
+                            <tr>
+                                <td class="ps-4">
+                                    <div class="fw-bold">{{ push.update.name }}</div>
+                                    <small class="text-muted">{{ push.update.filename }}</small>
+                                </td>
+                                <td>v{{ push.update.version }}</td>
+                                <td>
+                                    {% if push.status == 'completed' %}
+                                    <span class="badge bg-success">Success</span>
+                                    {% elif push.status == 'failed' %}
+                                    <span class="badge bg-danger" title="{{ push.error_message }}">Failed</span>
+                                    {% elif push.status == 'in_progress' %}
+                                    <span class="badge bg-primary">In Progress</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">Pending</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ push.scheduled_at|date:"Y-m-d H:i" }}</td>
+                                <td class="text-end pe-4">
+                                    {% if push.completed_at %}
+                                    {{ push.completed_at|date:"Y-m-d H:i" }}
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Windows Updates Tab -->
+    <div class="tab-pane fade" id="os-updates" role="tabpanel">
+        <div class="card shadow-sm">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table id="osUpdatesTable" class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-4">KB ID</th>
+                                <th>Title</th>
+                                <th class="text-end pe-4">Installed At</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for upd in reported_updates %}
+                            <tr>
+                                <td class="ps-4">
+                                    {% if upd.kb_id %}
+                                    <span class="badge bg-light text-dark border">{{ upd.kb_id }}</span>
+                                    {% else %}
+                                    <span class="text-muted small">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td style="max-width: 400px;" class="text-truncate" title="{{ upd.title }}">
+                                    {{ upd.title }}
+                                    {% if upd.support_url %}
+                                    <a href="{{ upd.support_url }}" target="_blank" class="ms-1 small"><i class="bi bi-box-arrow-up-right"></i></a>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end pe-4">{{ upd.installed_at|default:"Unknown" }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -259,6 +388,20 @@
                         </form>
                     </div>
                 </div>
+
+                <div class="card shadow-sm mb-4 border-warning">
+                    <div class="card-header bg-warning text-dark fw-bold">
+                        <i class="bi bi-arrow-repeat"></i> Restart Agent Service
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small">Restart the Kinetix Agent service on the device. Useful if the agent is behaving unexpectedly but still polling.</p>
+                        <div class="d-grid">
+                            <button id="restartAgentBtn" class="btn btn-outline-warning">
+                                <i class="bi bi-cpu"></i> Restart Service Now
+                            </button>
+                        </div>
+                    </div>
+                </div>
                 {% endif %}
             </div>
             
@@ -338,7 +481,8 @@
                         'X-CSRFToken': getCookie('csrftoken')
                     },
                     success: function() {
-                        alert('Uninstallation command queued! The agent will execute it on next poll.');
+                        requestDataRefresh();
+                        alert('Uninstallation command queued! The agent will execute it on next poll and then refresh inventory.');
                         location.reload();
                     },
                     error: function(xhr) {
@@ -355,14 +499,49 @@
             "searching": true,
             "retrieve": true,
             "columns": [
-                null,
-                null,
-                null,
-                { "orderable": false }
+                null, // Service Name
+                null, // Display Name
+                null, // Startup
+                null, // Status
+                { "orderable": false } // Actions
             ],
             "dom": 'rtip', // Hide default search box
             "language": {
                 "emptyTable": "No services found"
+            }
+        });
+
+        const historyTable = $('#historyTable').DataTable({
+            "pageLength": 25,
+            "order": [[3, "desc"]], // Sort by Scheduled At
+            "searching": true,
+            "retrieve": true,
+            "dom": 'rtip',
+            "columns": [
+                null,
+                null,
+                null,
+                null,
+                null
+            ],
+            "language": {
+                "emptyTable": "No Kinetix deployment history for this device."
+            }
+        });
+
+        const osUpdatesTable = $('#osUpdatesTable').DataTable({
+            "pageLength": 25,
+            "order": [[2, "desc"]], // Sort by Installed At
+            "searching": true,
+            "retrieve": true,
+            "dom": 'rtip',
+            "columns": [
+                null,
+                null,
+                null
+            ],
+            "language": {
+                "emptyTable": "No Windows Update history reported."
             }
         });
 
@@ -392,8 +571,9 @@
                         'X-CSRFToken': getCookie('csrftoken')
                     },
                     success: function() {
-                        alert(`Service ${action} command queued! The agent will execute it on next poll.`);
-                        // Switch to actions tab to see status
+                        // Automatically request a data refresh after the command is processed
+                        requestDataRefresh();
+                        alert(`Service ${action} command queued! The agent will execute it on next poll and then refresh inventory.`);
                         $('#actions-tab').tab('show');
                         refreshCommandStatus();
                     },
@@ -405,7 +585,79 @@
             }
         });
 
+        // Handle Service Config buttons (Startup Type)
+        $(document).on('click', '.service-config', function(e) {
+            e.preventDefault();
+            const link = $(this);
+            const serviceName = link.data('name');
+            const startupType = link.data('type');
+
+            if (confirm(`Change startup type for "${serviceName}" to ${startupType}?`)) {
+                $.ajax({
+                    url: '/api/v1/remote-command/',
+                    type: 'POST',
+                    data: JSON.stringify({
+                        device_id: deviceId,
+                        command_type: 'service_config',
+                        payload: JSON.stringify({
+                            service_name: serviceName,
+                            startup_type: startupType
+                        })
+                    }),
+                    contentType: 'application/json',
+                    headers: {
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    success: function() {
+                        requestDataRefresh();
+                        alert(`Startup type change queued! The agent will execute it on next poll.`);
+                        $('#actions-tab').tab('show');
+                        refreshCommandStatus();
+                    },
+                    error: function() {
+                        alert(`Failed to queue startup type change.`);
+                    }
+                });
+            }
+        });
+
         const deviceId = "{{ device.id }}";
+        
+        function pollInventoryStatus() {
+            $.ajax({
+                url: `/api/v1/devices/${deviceId}/`,
+                type: 'GET',
+                success: function(device) {
+                    // Update header badges if they exist
+                    const statusText = device.is_online ? 'Online' : 'Offline';
+                    // (Additional UI updates can be added here)
+                    
+                    if (device.inventory_refresh_status === 'idle') {
+                        // Check if we were previously waiting for a refresh
+                        // This is a simple way to detect transition from requested/processing to idle
+                        // We refresh to show the new data
+                        const isCurrentlyWaiting = $('.bi-spin, .bi-hourglass-split').length > 0;
+                        if (isCurrentlyWaiting) {
+                            location.reload();
+                        }
+                    }
+                }
+            });
+        }
+
+        // Start polling every 15 seconds on the inventory page
+        setInterval(pollInventoryStatus, 15000);
+
+        function requestDataRefresh() {
+            // Internal function to trigger the 'refresh_inventory_requested' flag on the device
+            $.ajax({
+                url: `/api/v1/devices/${deviceId}/request_refresh/`,
+                type: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                }
+            });
+        }
 
         // Handle Registry Form
         $('#registryForm').submit(function(e) {
@@ -438,8 +690,9 @@
                 success: function() {
                     btn.prop('disabled', false).html(originalHtml);
                     $('#regPath, #regName, #regValue').val('');
+                    requestDataRefresh();
                     refreshCommandStatus();
-                    alert('Registry command queued successfully!');
+                    alert('Registry command queued successfully! Inventory will be updated after execution.');
                 },
                 error: function() {
                     btn.prop('disabled', false).html(originalHtml);
@@ -470,15 +723,63 @@
                     headers: {
                         'X-CSRFToken': getCookie('csrftoken')
                     },
+                                    success: function() {
+                                        btn.prop('disabled', false).html(originalHtml);
+                                        $('#rebootMessage').val('');
+                                        requestDataRefresh();
+                                        refreshCommandStatus();
+                                        alert('Restart command queued successfully! Inventory will be updated after execution.');
+                                    },
+                    
+                    error: function(xhr) {
+                        btn.prop('disabled', false).html(originalHtml);
+                        let errorMsg = 'Failed to queue restart command.';
+                        if (xhr.responseJSON) {
+                            const errors = xhr.responseJSON;
+                            if (typeof errors === 'object') {
+                                const firstKey = Object.keys(errors)[0];
+                                const firstVal = errors[firstKey];
+                                errorMsg = Array.isArray(firstVal) ? firstVal[0] : JSON.stringify(firstVal);
+                                if (firstKey !== 'non_field_errors' && firstKey !== 'detail') {
+                                    errorMsg = firstKey + ': ' + errorMsg;
+                                }
+                            }
+                        }
+                        alert('Error: ' + errorMsg);
+                    }
+                });
+            }
+        });
+
+        // Handle Restart Agent Button
+        $('#restartAgentBtn').click(function() {
+            const btn = $(this);
+            const originalHtml = btn.html();
+
+            if (confirm("Are you sure you want to restart the Kinetix Agent service on this device? The agent will be offline for about 10-20 seconds.")) {
+                btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Queuing...');
+
+                $.ajax({
+                    url: '/api/v1/remote-command/',
+                    type: 'POST',
+                    data: JSON.stringify({
+                        device_id: deviceId,
+                        command_type: 'restart_agent',
+                        payload: ''
+                    }),
+                    contentType: 'application/json',
+                    headers: {
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
                     success: function() {
                         btn.prop('disabled', false).html(originalHtml);
-                        $('#rebootMessage').val('');
+                        requestDataRefresh();
                         refreshCommandStatus();
-                        alert('Restart command queued successfully!');
+                        alert('Agent restart command queued successfully!');
                     },
                     error: function() {
                         btn.prop('disabled', false).html(originalHtml);
-                        alert('Failed to queue restart command.');
+                        alert('Failed to queue agent restart command.');
                     }
                 });
             }
@@ -540,6 +841,8 @@
         function performSearch(val) {
             appsTable.search(val).draw();
             servicesTable.search(val).draw();
+            historyTable.search(val).draw();
+            osUpdatesTable.search(val).draw();
         }
 
         // Connect custom search bar

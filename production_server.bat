@@ -52,6 +52,7 @@ if errorlevel 1 (
 
 REM 3. Run migrations and collectstatic
 echo [2/5] Preparing database and static files...
+python manage.py makemigrations --noinput
 python manage.py migrate --noinput
 if not exist "staticfiles" mkdir staticfiles
 REM Removed --clear because it causes PermissionErrors on Windows when files are locked

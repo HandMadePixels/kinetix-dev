@@ -13,11 +13,10 @@ REM 1. Check virtual environment
 if not exist "venv\Scripts\activate.bat" (
     echo Creating virtual environment...
     python -m venv venv
-    call venv\Scripts\activate.bat
-    pip install -r requirements.txt
-) else (
-    call venv\Scripts\activate.bat
 )
+call venv\Scripts\activate.bat
+echo Syncing dependencies...
+pip install -q -r requirements.txt
 
 REM 2. Copy Public Key from Server
 echo Copying public key for update verification...

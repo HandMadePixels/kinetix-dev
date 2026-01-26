@@ -11,6 +11,7 @@ router = DefaultRouter()
 router.register(r'devices', views.DeviceViewSet, basename='device')
 router.register(r'pushes', views.UpdatePushViewSet, basename='push')
 router.register(r'commands-history', views.RemoteCommandViewSet, basename='command-history')
+router.register(r'audit-logs', views.AuditLogViewSet, basename='audit-log')
 
 app_name = 'api'
 

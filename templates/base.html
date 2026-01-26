@@ -64,8 +64,12 @@
                         class="bi bi-laptop"></i> Devices</a></li>
             <li class="nav-item"><a class="nav-link text-white" href="{% url 'dashboard:application_inventory' %}"><i
                         class="bi bi-box-seam"></i> App Inventory</a></li>
+            <li class="nav-item"><a class="nav-link text-white" href="{% url 'dashboard:service_inventory' %}"><i
+                        class="bi bi-gear-wide-connected"></i> Services</a></li>
+            {% if perms.updates.add_update or perms.updates.can_deploy_updates %}
             <li class="nav-item"><a class="nav-link text-white" href="{% url 'dashboard:update_center' %}"><i
                         class="bi bi-cloud-arrow-up"></i> Update Center</a></li>
+            {% endif %}
             <li class="nav-item"><a class="nav-link text-white" href="/admin/"><i class="bi bi-shield-lock"></i> Admin
                     Panel</a></li>
             <li class="nav-item"><a class="nav-link text-white" href="{% url 'dashboard:audit_logs' %}"><i

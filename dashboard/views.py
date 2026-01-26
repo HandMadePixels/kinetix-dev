@@ -1,5 +1,5 @@
 from django.views.generic import TemplateView, ListView, DetailView
-from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib.auth.views import LogoutView
 from django.db.models import Count, Max, Q, OuterRef, Subquery
 from django.db.models.functions import TruncDate
@@ -7,21 +7,26 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.urls import reverse_lazy
 import datetime
-from core.models import Device, AuditLog
+from core.models import Device, AuditLog, DeviceGroup
 from updates.models import Update, UpdatePush
-from inventory.models import InventorySnapshot, ApplicationInventory
+from inventory.models import InventorySnapshot, ApplicationInventory, ServiceInventory
 
 class DashboardLogoutView(LogoutView):
     next_page = reverse_lazy('admin:login')
 
-class UpdateCenterView(LoginRequiredMixin, TemplateView):
+class UpdateCenterView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
     template_name = 'dashboard/update_center.html'
+
+    def test_func(self):
+        return self.request.user.has_perm('updates.add_update') or \
+               self.request.user.has_perm('updates.can_deploy_updates')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['available_updates'] = Update.objects.filter(scan_status__in=['clean', 'pending']).order_by('-uploaded_at')
         context['devices'] = Device.objects.filter(status='active').order_by('hostname')
         context['device_count'] = context['devices'].count()
+        context['device_groups'] = DeviceGroup.objects.annotate(num_devices=Count('devices')).order_by('name')
         context['recent_pushes'] = UpdatePush.objects.select_related('update', 'device').order_by('-scheduled_at', '-pushed_at')[:20]
         return context
 
@@ -125,26 +130,78 @@ class ApplicationInventoryListView(LoginRequiredMixin, ListView):
         context['query'] = self.request.GET.get('q', '')
         return context
 
+class ServiceInventoryListView(LoginRequiredMixin, ListView):
+    model = ServiceInventory
+    template_name = 'dashboard/service_inventory.html'
+    context_object_name = 'services'
+
+    def get_queryset(self):
+        # Get all service records that belong to the latest snapshot of their respective device.
+        queryset = ServiceInventory.objects.filter(
+            snapshot_id=Subquery(
+                InventorySnapshot.objects.filter(
+                    device=OuterRef('snapshot__device')
+                ).order_by('-collected_at').values('id')[:1]
+            )
+        )
+
+        # Apply search filter
+        query = self.request.GET.get('q')
+        if query:
+            queryset = queryset.filter(
+                Q(display_name__icontains=query) |
+                Q(name__icontains=query) |
+                Q(description__icontains=query)
+            )
+        
+        # Group and aggregate
+        # We group by name, display_name, and startup_type
+        queryset = queryset.values(
+            'name', 'display_name', 'startup_type'
+        ).annotate(
+            device_count=Count('snapshot__device', distinct=True),
+            running_count=Count('snapshot__device', filter=Q(status='running'), distinct=True),
+            stopped_count=Count('snapshot__device', filter=Q(status='stopped'), distinct=True)
+        ).order_by('display_name')
+        
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['query'] = self.request.GET.get('q', '')
+        return context
+
 class DeviceListView(LoginRequiredMixin, ListView):
     model = Device
     template_name = 'dashboard/device_list.html'
     context_object_name = 'devices'
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        # Annotate with the timestamp of the latest inventory snapshot
+        latest_snapshot = InventorySnapshot.objects.filter(
+            device=OuterRef('pk')
+        ).order_by('-collected_at').values('collected_at')[:1]
+
+        queryset = super().get_queryset().select_related('group').annotate(
+            latest_refresh_time=Subquery(latest_snapshot)
+        )
+        
         query = self.request.GET.get('q')
         if query:
             queryset = queryset.filter(
                 Q(hostname__icontains=query) |
                 Q(ip_address__icontains=query) |
                 Q(os_version__icontains=query) |
-                Q(inventory_snapshots__applications__display_name__icontains=query)
+                Q(inventory_snapshots__applications__display_name__icontains=query) |
+                Q(inventory_snapshots__services__display_name__icontains=query) |
+                Q(inventory_snapshots__services__name__icontains=query)
             ).distinct()
         return queryset
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['query'] = self.request.GET.get('q', '')
+        context['groups'] = DeviceGroup.objects.all()
         return context
 
 class DeviceInventoryView(LoginRequiredMixin, DetailView):
@@ -161,10 +218,15 @@ class DeviceInventoryView(LoginRequiredMixin, DetailView):
         if snapshot:
             context['services'] = snapshot.services.all()
             context['applications'] = snapshot.applications.all()
+            context['reported_updates'] = snapshot.windows_updates.all().order_by('-installed_at')
         else:
-            from inventory.models import ServiceInventory, ApplicationInventory
+            from inventory.models import ServiceInventory, ApplicationInventory, WindowsUpdate
             context['services'] = ServiceInventory.objects.none()
             context['applications'] = ApplicationInventory.objects.none()
+            context['reported_updates'] = WindowsUpdate.objects.none()
+        
+        # Add deployment history
+        context['update_pushes'] = UpdatePush.objects.filter(device=device).select_related('update').order_by('-scheduled_at')
         
         return context
 

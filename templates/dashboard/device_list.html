@@ -6,6 +6,11 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Managed Devices</h1>
     <div class="d-flex gap-2">
+        {% if perms.core.can_request_refresh %}
+        <button id="refreshAllDevices" class="btn btn-outline-success me-2">
+            <i class="bi bi-arrow-repeat"></i> Refresh All Devices
+        </button>
+        {% endif %}
         <form method="get" class="d-flex">
             <input type="text" name="q" class="form-control me-2" placeholder="Search devices..." value="{{ query }}">
             <button type="submit" class="btn btn-primary me-2">Search</button>
@@ -24,11 +29,13 @@
                 <thead class="table-light">
                     <tr>
                         <th class="ps-4">Hostname</th>
+                        <th>Group</th>
                         <th>Status</th>
                         <th>Connectivity</th>
                         <th>IP Address</th>
                         <th>OS Version</th>
                         <th>Last Seen</th>
+                        <th>Inventory Status</th>
                         <th class="text-end pe-4">Actions</th>
                     </tr>
                 </thead>
@@ -36,6 +43,13 @@
                     {% for device in devices %}
                     <tr>
                         <td class="ps-4 fw-bold text-primary">{{ device.hostname }}</td>
+                        <td>
+                            {% if device.group %}
+                            <span class="badge bg-light text-dark border">{{ device.group.name }}</span>
+                            {% else %}
+                            <span class="text-muted small">None</span>
+                            {% endif %}
+                        </td>
                         <td>
                             {% if device.status == 'active' %}
                             <span class="badge bg-success">Active</span>
@@ -57,6 +71,19 @@
                         <td><code>{{ device.ip_address }}</code></td>
                         <td>{{ device.os_version }}</td>
                         <td>{{ device.last_seen|timesince }} ago</td>
+                        <td>
+                            {% if device.inventory_refresh_status == 'requested' %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-hourglass-split me-1"></i> Requested</span>
+                            {% elif device.inventory_refresh_status == 'processing' %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-gear-fill bi-spin me-1"></i> In Progress</span>
+                            {% else %}
+                                {% if device.latest_refresh_time %}
+                                <span class="text-muted small">{{ device.latest_refresh_time|timesince }} ago</span>
+                                {% else %}
+                                <span class="text-danger small">Never</span>
+                                {% endif %}
+                            {% endif %}
+                        </td>
                         <td class="text-end pe-4">
                             <div class="btn-group">
                                 {% if perms.core.can_view_details %}
@@ -75,6 +102,17 @@
                                     <i class="bi bi-info-circle"></i>
                                 </button>
                                 {% endif %}
+                                {% if perms.core.change_device %}
+                                <button type="button" class="btn btn-sm btn-outline-warning edit-device"
+                                    data-id="{{ device.id }}"
+                                    data-hostname="{{ device.hostname }}"
+                                    data-group-id="{{ device.group.id|default:'' }}"
+                                    data-status="{{ device.status }}"
+                                    data-notes="{{ device.notes|default:'' }}"
+                                    title="Edit Device">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                {% endif %}
                                 <a href="{% url 'dashboard:device_inventory' device.pk %}"
                                     class="btn btn-sm btn-outline-primary" title="View Inventory">
                                     <i class="bi bi-list-check"></i>
@@ -83,6 +121,12 @@
                                 <button type="button" class="btn btn-sm btn-outline-success refresh-device"
                                     data-id="{{ device.id }}" title="Request Refresh">
                                     <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                {% endif %}
+                                {% if perms.core.can_trigger_reboot %}
+                                <button type="button" class="btn btn-sm btn-outline-warning reboot-device"
+                                    data-id="{{ device.id }}" data-hostname="{{ device.hostname }}" title="Restart Device">
+                                    <i class="bi bi-power"></i>
                                 </button>
                                 {% endif %}
                                 {% if perms.core.delete_device %}
@@ -156,6 +200,52 @@
         </div>
     </div>
 </div>
+
+<!-- Edit Device Modal -->
+<div class="modal fade" id="editDeviceModal" tabindex="-1" aria-labelledby="editDeviceModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title" id="editDeviceModalLabel"><i class="bi bi-pencil"></i> Edit Device</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="editDeviceForm">
+                <div class="modal-body">
+                    <input type="hidden" id="edit-device-id">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Hostname</label>
+                        <input type="text" class="form-control" id="edit-hostname" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Device Group</label>
+                        <select class="form-select" id="edit-group">
+                            <option value="">No Group</option>
+                            {% for group in groups %}
+                            <option value="{{ group.id }}">{{ group.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Status</label>
+                        <select class="form-select" id="edit-status" required>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                            <option value="blocked">Blocked</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Internal Notes</label>
+                        <textarea class="form-control" id="edit-notes" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -163,15 +253,17 @@
     $(document).ready(function () {
         $('#devicesTable').DataTable({
             "pageLength": 25,
-            "order": [[5, "desc"]], // Sort by Last Seen
+            "order": [[7, "desc"]], // Sort by Last Seen
             "retrieve": true,
             "columns": [
                 null, // Hostname
+                null, // Group
                 null, // Status
                 null, // Connectivity
                 null, // IP Address
                 null, // OS Version
                 null, // Last Seen
+                null, // Inventory Status
                 { "orderable": false } // Actions
             ],
             "language": {
@@ -193,6 +285,74 @@
             $('#modal-notes').text(btn.data('notes'));
             
             $('#deviceDetailsModal').modal('show');
+        });
+
+        // Handle edit device button
+        $(document).on('click', '.edit-device', function () {
+            const btn = $(this);
+            $('#edit-device-id').val(btn.data('id'));
+            $('#edit-hostname').val(btn.data('hostname'));
+            $('#edit-group').val(btn.data('group-id'));
+            $('#edit-status').val(btn.data('status'));
+            $('#edit-notes').val(btn.data('notes'));
+            
+            $('#editDeviceModal').modal('show');
+        });
+
+        // Handle edit device form submission
+        $('#editDeviceForm').on('submit', function (e) {
+            e.preventDefault();
+            const deviceId = $('#edit-device-id').val();
+            const btn = $(this).find('button[type="submit"]');
+            const originalHtml = btn.html();
+
+            const payload = {
+                hostname: $('#edit-hostname').val(),
+                group: $('#edit-group').val() || null,
+                status: $('#edit-status').val(),
+                notes: $('#edit-notes').val()
+            };
+
+            btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...');
+
+            $.ajax({
+                url: `/api/v1/devices/${deviceId}/`,
+                type: 'PATCH',
+                data: JSON.stringify(payload),
+                contentType: 'application/json',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                success: function () {
+                    // Trigger inventory refresh after successful edit
+                    $.ajax({
+                        url: `/api/v1/devices/${deviceId}/request_refresh/`,
+                        type: 'POST',
+                        headers: {
+                            'X-CSRFToken': getCookie('csrftoken')
+                        },
+                        complete: function() {
+                            location.reload();
+                        }
+                    });
+                },
+                error: function (xhr) {
+                    let errorMsg = 'Failed to update device.';
+                    if (xhr.responseJSON) {
+                        const errors = xhr.responseJSON;
+                        if (typeof errors === 'object') {
+                            const firstKey = Object.keys(errors)[0];
+                            const firstVal = errors[firstKey];
+                            errorMsg = Array.isArray(firstVal) ? firstVal[0] : JSON.stringify(firstVal);
+                            if (firstKey !== 'non_field_errors' && firstKey !== 'detail') {
+                                errorMsg = firstKey + ': ' + errorMsg;
+                            }
+                        }
+                    }
+                    alert('Error: ' + errorMsg);
+                    btn.prop('disabled', false).html(originalHtml);
+                }
+            });
         });
 
         // Handle refresh button (using event delegation for DataTables compatibility)
@@ -236,6 +396,77 @@
             });
         });
 
+        // Handle reboot button
+        $(document).on('click', '.reboot-device', function () {
+            const btn = $(this);
+            const deviceId = btn.data('id');
+            const hostname = btn.data('hostname');
+
+            if (confirm(`Are you sure you want to remotely RESTART device "${hostname}"?`)) {
+                btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>');
+
+                $.ajax({
+                    url: '/api/v1/remote-command/',
+                    type: 'POST',
+                    data: JSON.stringify({
+                        device_id: deviceId,
+                        command_type: 'reboot',
+                        payload: 'Remote restart requested by administrator.'
+                    }),
+                    contentType: 'application/json',
+                    headers: {
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    success: function () {
+                        alert('Restart command queued! The device will process it on its next poll.');
+                        location.reload();
+                    },
+                    error: function (xhr) {
+                        let errorMsg = 'Failed to queue restart command.';
+                        if (xhr.responseJSON) {
+                            const errors = xhr.responseJSON;
+                            if (typeof errors === 'object') {
+                                const firstKey = Object.keys(errors)[0];
+                                const firstVal = errors[firstKey];
+                                errorMsg = Array.isArray(firstVal) ? firstVal[0] : JSON.stringify(firstVal);
+                                if (firstKey !== 'non_field_errors' && firstKey !== 'detail') {
+                                    errorMsg = firstKey + ': ' + errorMsg;
+                                }
+                            }
+                        }
+                        alert('Error: ' + errorMsg);
+                        btn.prop('disabled', false).html('<i class="bi bi-power"></i>');
+                    }
+                });
+            }
+        });
+
+        // Handle Refresh All Devices button
+        $('#refreshAllDevices').on('click', function () {
+            const btn = $(this);
+            const originalHtml = btn.html();
+
+            if (confirm("Are you sure you want to request an inventory refresh from ALL active devices? This may cause high server load if you have many devices.")) {
+                btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Requesting...');
+
+                $.ajax({
+                    url: '/api/v1/devices/request_refresh_all/',
+                    type: 'POST',
+                    headers: {
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    success: function (response) {
+                        alert(`Refresh requested for ${response.count} devices! They will update their inventory on their next poll.`);
+                        location.reload();
+                    },
+                    error: function (xhr) {
+                        alert('Failed to request mass refresh.');
+                        btn.prop('disabled', false).html(originalHtml);
+                    }
+                });
+            }
+        });
+
         // Handle delete button (using event delegation for DataTables compatibility)
         $(document).on('click', '.delete-device', function () {
             const btn = $(this);
@@ -274,6 +505,56 @@
                 });
             }
         });
+
+        // Background Polling for Device Status
+        function pollDeviceStatus() {
+            $.ajax({
+                url: '/api/v1/devices/',
+                type: 'GET',
+                success: function(response) {
+                    const devices = response.results || response;
+                    devices.forEach(device => {
+                        const $row = $(`button[data-id="${device.id}"]`).closest('tr');
+                        if ($row.length) {
+                            // Update Connectivity
+                            const connectivityHtml = device.is_online ? 
+                                '<span class="badge rounded-pill bg-success"><i class="bi bi-circle-fill small me-1"></i> Online</span>' :
+                                '<span class="badge rounded-pill bg-danger"><i class="bi bi-circle-fill small me-1"></i> Offline</span>';
+                            
+                            // Only update if changed to avoid flickering
+                            if ($row.find('td:nth-child(4)').html() !== connectivityHtml) {
+                                $row.find('td:nth-child(4)').html(connectivityHtml);
+                            }
+
+                            // Update Inventory Status
+                            let invStatusHtml = '';
+                            if (device.inventory_refresh_status === 'requested') {
+                                invStatusHtml = '<span class="badge bg-info text-dark"><i class="bi bi-hourglass-split me-1"></i> Requested</span>';
+                            } else if (device.inventory_refresh_status === 'processing') {
+                                invStatusHtml = '<span class="badge bg-warning text-dark"><i class="bi bi-gear-fill bi-spin me-1"></i> In Progress</span>';
+                            } else {
+                                // For 'idle', we might want to show the last refresh time, 
+                                // but that requires recalculating the 'timesince' on the client or server.
+                                // For now, we update the status if it was requested/processing.
+                                const currentContent = $row.find('td:nth-child(8)').text().trim();
+                                if (currentContent === 'Requested' || currentContent === 'In Progress') {
+                                    // If it just finished, we refresh the page once or leave it.
+                                    // Realistically, to get the "timesince" right, we'd need to refresh.
+                                    location.reload(); 
+                                }
+                            }
+                            
+                            if (invStatusHtml && $row.find('td:nth-child(8)').html() !== invStatusHtml) {
+                                $row.find('td:nth-child(8)').html(invStatusHtml);
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        // Start polling every 10 seconds
+        setInterval(pollDeviceStatus, 10000);
     });
 </script>
 <style>

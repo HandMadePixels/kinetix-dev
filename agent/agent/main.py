@@ -80,5 +80,21 @@ if __name__ == '__main__':
         elif cmd in ["install", "remove", "start", "stop", "restart", "update", "debug"]:
             # Pass to pywin32 service utility
             win32serviceutil.HandleCommandLine(KinetixAgentService)
+        elif len(sys.argv) >= 4:
+            # Handle GUI Restart Arguments: kinetix_agent.exe "message" "hostname" "postpone_count"
+            try:
+                from gui import RestartUI
+                msg = sys.argv[1]
+                host = sys.argv[2]
+                count = sys.argv[3]
+                try:
+                    count = int(count)
+                except:
+                    count = 0
+                
+                app = RestartUI(msg, host, postpone_count=count)
+                app.run()
+            except Exception as e:
+                agent_log.error(f"Error launching UI: {e}")
         else:
             print_help()

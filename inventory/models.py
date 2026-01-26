@@ -101,6 +101,31 @@ class ApplicationInventory(models.Model):
         return f"{self.display_name}{version_str}"
 
 
+class WindowsUpdate(models.Model):
+    """Windows Update history (KBs)"""
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    snapshot = models.ForeignKey(
+        InventorySnapshot,
+        on_delete=models.CASCADE,
+        related_name='windows_updates'
+    )
+    
+    title = models.CharField(max_length=500)
+    description = models.TextField(blank=True)
+    kb_id = models.CharField(max_length=100, blank=True, db_index=True)
+    installed_at = models.DateTimeField(null=True, blank=True)
+    support_url = models.URLField(max_length=500, blank=True)
+    
+    class Meta:
+        ordering = ['-installed_at']
+        indexes = [
+            models.Index(fields=['snapshot', 'kb_id']),
+        ]
+    
+    def __str__(self):
+        return self.title
+
 class InventoryChange(models.Model):
     """Track changes in inventory over time"""
     

@@ -44,21 +44,6 @@ candle.exe product.wxs
 light.exe product.wixobj -o cc_agent_setup.msi
 ```
 
-## 🔒 Step 4: Code Signing (Recommended)
-
-To avoid "Unknown Publisher" warnings, sign the MSI:
-
-```bash
-signtool sign /f mycert.pfx /p password /t http://timestamp.digicert.com cc_agent_setup.msi
-```
-
-## 🧪 Testing
-
-1.  Run the MSI on a test Windows machine.
-2.  Check if the service is running: `Get-Service KinetixAgent`
-3.  Check the logs at `C:\Program Files\KinetixAgent\logs\agent.log`
-4.  Monitor the Kinetix Dashboard for the new agent registration.
-
 ## 🛂 Manual Management
 
 The `cc_agent.exe` supports CLI commands:

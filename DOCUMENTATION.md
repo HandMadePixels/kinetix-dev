@@ -1,159 +1,117 @@
-# 🌐 Kinetix & Agent: Comprehensive Documentation
+# 🌐 Kinetix & Agent: Comprehensive Technical Documentation
 
-Welcome to the **Kinetix** project. This documentation provides a complete guide to setting up, running, and managing the entire ecosystem, including the server and the endpoint agent.
-
----
-
-## ✨ Features
-
-- **Interactive Dashboard**: Real-time visualization of device status, OS distribution, and deployment history using Chart.js.
-- **Secure Updates**: End-to-end encrypted and signed update delivery (RSA-4096 & SHA-256).
-- **Malware Scanning**: Automatic scanning of updates via VirusTotal and ClamAV.
-- **Device Inventory**: Automated collection of installed applications and running services.
-- **Remote Administration**: 
-    - **Service Control**: Start/Stop Windows services remotely.
-    - **Remote Shell**: Execute commands and capture output.
-    - **Registry Management**: Modify HKLM/HKCU keys remotely.
-    - **Interactive Reboot**: Branded user notifications with postponement options.
-- **Audit Logging**: Comprehensive tracking of all system actions for compliance and security.
-- **Robust API**: RESTful API for device registration, inventory submission, and command polling.
+Welcome to the **Kinetix** ecosystem. This document provides an in-depth technical overview of the system architecture, security implementation, and management workflows.
 
 ---
 
-## 🏗️ 1. Server Setup (Kinetix)
+## 🏗️ 1. System Architecture
 
-The Kinetix is the brain of the operation. It manages devices, audits, and software updates.
+Kinetix is built on a **Pull-Based Architecture**, designed to work seamlessly within strict corporate networks and behind NAT/Firewalls without requiring inbound port mapping on client devices.
 
-### Prerequisites
-- Python 3.11+
-- Redis Server (Native Windows, Docker, or WSL)
-- WiX Toolset v3.11 (for building Agent MSI)
-
-### Step-by-Step Setup
-1.  **Clone the project** to your desired directory.
-2.  Open a terminal in the project root.
-3.  **Initial Setup**: Run the automated setup script.
-    ```cmd
-    quickstart.bat
-    ```
-    *   Creates virtual environment (`venv`).
-    *   Installs Python dependencies.
-    *   Generates secure keys (`.env` and `keys/` directory).
-    *   Initializes the database.
-    *   Prompts to create a Superuser (Admin).
-
-### Running the Server
-You have two options for running the server:
-
--   **Option A: Production-Grade (Recommended)**
-    ```cmd
-    production_server.bat
-    ```
-    *   Enforces `DEBUG=False`.
-    *   Starts Redis automatically (if installed locally).
-    *   Launches Waitress (WSGI Server) for high performance.
-    *   Starts Celery Worker and Beat for background tasks.
-
--   **Option B: Development Mode**
-    ```cmd
-    run_dev.bat
-    ```
-    *   Starts standard Django development server with hot-reloading.
+### Components
+-   **Kinetix Command Center**: A Django-based central management server (CMS) providing a RESTful API and a modern web dashboard.
+-   **Kinetix Endpoint Agent**: A Python-based Windows Service that polls the Command Center for instructions.
+-   **Task Engine**: Powered by **Celery** and **Redis**, handling asynchronous malware scanning, update processing, and deployment scheduling.
+-   **Database**: SQLite by default (production-ready via `production_server.bat`), with built-in support for PostgreSQL migration.
 
 ---
 
-## 🤖 2. The Endpoint Agent
+## 🛡️ 2. Security & Integrity Model
 
-The Agent is a secure background service installed on client devices.
+Security is baked into every layer of Kinetix, from communication to execution.
 
-### Building the Agent (MSI Installer)
-To distribute the agent, you need to build a Windows Installer (MSI).
+### Communication
+-   **JWT Authentication**: Every agent receives a unique JSON Web Token upon registration. All subsequent API calls require this token in the `Authorization: Bearer` header.
+-   **AES-256 (Fernet) Encryption**: Sensitive data such as API keys, service credentials, and internal auth tokens are stored encrypted at rest using the Fernet symmetric encryption standard.
 
-1.  Navigate to the `agent/` directory:
-    ```cmd
-    cd agent
-    ```
-2.  Run the **MSI Builder**:
-    ```cmd
-    build_agent_msi.bat
-    ```
-    *   **Compiles** Python code into a standalone executable (`kinetix_agent.exe`) using PyInstaller.
-    *   **Bundles** the executable, configuration, logo, and public key.
-    *   **Generates** a `.msi` installer using WiX Toolset.
-    *   **Output**: `agent/kinetix_agent_setup.msi`.
+### Software Integrity
+-   **RSA-4096 Signing**: All updates uploaded to the Command Center are automatically hashed (SHA-256) and signed using an RSA-4096 private key.
+-   **Client-Side Verification**: Before installation, the Agent verifies the update's hash and ensures the RSA signature matches its local `public_key.pem`.
+-   **Automatic Malware Defense**: Integrated **VirusTotal** and **ClamAV** scanners automatically inspect every upload. Deployments are restricted until a "Clean" status is achieved.
 
-### Deploying the Agent
-1.  Copy `kinetix_agent_setup.msi` to the target machine.
-2.  Run the installer (double-click or via GPO/SCCM).
-    *   Installs to `C:\Program Files\KinetixAgent`.
-    *   Registers as a Windows Service (`KinetixAgent`).
-    *   Starts automatically.
-
-### Configuration & Management
-The agent is designed to be zero-touch, but can be managed via CLI if needed.
-
--   **Set Server URL**: If the Kinetix IP changes.
-    ```cmd
-    cd "C:\Program Files\KinetixAgent"
-    kinetix_agent.exe set-server http://192.168.1.50:8000
-    kinetix_agent.exe restart
-    ```
-
--   **Manual Inventory**: Force immediate inventory collection.
-    ```cmd
-    kinetix_agent.exe inventory
-    ```
+### Administrative Control
+-   **Granular RBAC**: Integration with Django's permission system allows for fine-grained control:
+    -   `updates.add_update`: Permission to upload new software.
+    -   `updates.can_deploy_updates`: Permission to push software to devices.
+    -   `core.can_trigger_reboot`: Permission to restart remote endpoints.
+-   **Audit Logging**: Every action—from a user login to a remote shell execution—is logged with severity, timestamp, and metadata in the `AuditLog`.
 
 ---
 
-## 📦 3. Managing Updates
+## 🤖 3. The Endpoint Agent
 
-The Kinetix allows you to distribute software updates securely.
+The agent is the silent worker on every managed device.
 
-### Uploading an Update
-1.  Log in to the **Dashboard**.
-2.  Navigate to **Update Center**.
-3.  Upload your installer (`.msi` or `.exe`).
-4.  **Automatic Signing**: The server automatically calculates the SHA-256 hash and signs the update using the stored RSA Private Key (`keys/private_key.pem`).
-5.  **Malware Scan**: The file is queued for scanning via VirusTotal/ClamAV.
+### Core Capabilities
+-   **Windows Service Integration**: Runs as `SYSTEM`, ensuring it starts before user login and remains persistent.
+-   **Session 0 Isolation Bypass**: Kinetix uses a proprietary mechanism involving `schtasks` and temporary batch wrappers to display interactive UI components (like reboot notifications) from the non-interactive SYSTEM session into the active user's desktop.
+-   **Asynchronous Command Execution**: Long-running tasks (uninstalls, large updates) are executed in background threads, allowing the agent to continue sending heartbeats and polling for new commands.
+-   **Reliable Metrics**: System uptime and boot times are collected using a multi-layered fallback strategy: `psutil` -> `WMI` -> `ctypes (GetTickCount64)`.
 
-### Pushing an Update
-1.  Select the **Update** and the **Target Device(s)**.
-2.  Schedule the deployment.
-3.  The Agent picks up the command on its next poll.
-4.  **Verification**: The Agent verifies the Hash and Signature using its local `public_key.pem`.
-5.  **Installation**: If valid, the update is installed silently.
+### Local Troubleshooting
+-   **Logs**: Located in the `logs/` subdirectory of the agent installation.
+    -   `agent.log`: Main operational logs.
+    -   `command_history.log`: A JSON-structured record of every command received from the server.
+-   **Manual Control**:
+    -   `kinetix_agent.exe debug`: Run in the console to see real-time output.
+    -   `kinetix_agent.exe inventory`: Trigger a manual sync.
 
 ---
 
-## 🛡️ 4. Security Practices & Threat Model
+## 📦 4. Management Workflows
 
-### Security Controls
--   **Transport Security**: Agents enforce SSL/TLS (configurable).
--   **RSA-4096 Signatures**: Ensures updates are authentic and untampered.
--   **JWT Authentication**: Devices use secure tokens for all API requests.
--   **Credential Storage**: Tokens are stored in Windows Credential Manager (DPAPI).
--   **Session 0 Protection**: GUI components are launched via Scheduled Tasks to ensure user interactivity.
+### Inventory Management
+Kinetix maintains a deep inventory of every device:
+-   **Installed Applications**: Enumerated from HKLM, HKCU, and WOW6432Node registry hives.
+-   **Windows Services**: Real-time status and startup configuration (`Automatic`, `Delayed`, `Manual`, `Disabled`).
+-   **OS Patches**: Full history of installed Windows Update KBs.
+-   **Inventory Pruning**: To maintain performance, the system automatically prunes old snapshots, keeping only the most recent three per device.
 
-### Threat Model
+### Software Deployment
+-   **Update Center**: A centralized hub for managing MSI and EXE packages.
+-   **Group Operations**: Deploy updates to specific `DeviceGroups`. Groups must contain at least one device to be eligible for bulk deployment.
+-   **Smart Retries**: Failed deployments can be retried with a single click. Full error logs (stdout/stderr) from the remote installer are captured and viewable in the dashboard.
 
-| Threat | Description | Mitigation Strategy |
+### Remote Administration
+-   **Service Control**: Start, stop, or restart any Windows service remotely.
+-   **Registry Management**: Remotely set or delete keys and values across the registry hives.
+-   **Managed Reboot**: Prompt users to restart with a branded UI, allowing them to postpone if they are in the middle of critical work.
+
+---
+
+## ⚙️ 5. Technical Reference
+
+### Key API Endpoints
+| Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| **Update Tampering** | Attacker modifies an update file in transit. | **RSA-4096 Signature Verification**: Modifications break the signature. |
-| **Token Theft** | Malware steals the Agent's auth token. | Tokens are stored in Windows Credential Manager. |
-| **Rogue Command** | Attacker tries to send fake reboot/shell commands. | Commands require valid JWT and strict backend permission checks (`can_execute_shell`, etc.). |
+| `/api/v1/register/` | POST | Initial device registration. |
+| `/api/v1/commands/` | GET | Polled by agents to receive pending tasks. |
+| `/api/v1/inventory/` | POST | Submission of system snapshots. |
+| `/api/v1/update-status/` | POST | Reporting deployment success/failure. |
+
+### Database Schema Highlights
+-   **Device**: Primary endpoint record with status and metadata.
+-   **InventorySnapshot**: Parent record for services, apps, and KBs.
+-   **UpdatePush**: Junction tracking the state of a software deployment.
+-   **RemoteCommand**: Tracks generic remote actions (Shell, Reboot, Registry).
 
 ---
 
-## 🧹 5. Maintenance (Factory Reset)
+## 🛠️ 6. Maintenance & Deployment
 
-To completely reset the environment (Server & Agent artifacts):
-
+### Quick Reset
+To completely clear the environment and start from scratch:
 ```cmd
 clean.bat
 ```
-**WARNING**: This deletes the database, keys, logs, and virtual environments. Use only when you want to start fresh.
+
+### Production Start
+To launch the system in a production-hardened state:
+```cmd
+production_server.bat
+```
+This script handles dependency checks, port clearing, database migrations, and static file collection automatically.
 
 ---
 
-**Developed with ❤️ by Antigravity**
+**🏷️ Version 1.3.0** | *Enterprise Endpoint Resilience*

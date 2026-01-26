@@ -9,6 +9,9 @@ from django.utils import timezone
 from core.fields import EncryptedTextField
 
 
+from django.core.serializers.json import DjangoJSONEncoder
+
+
 class Device(models.Model):
     """Registered endpoint device"""
     
@@ -41,6 +44,17 @@ class Device(models.Model):
     # Additional info
     notes = models.TextField(blank=True)
     refresh_inventory_requested = models.BooleanField(default=False)
+    
+    INVENTORY_STATUS_CHOICES = [
+        ('idle', 'Idle'),
+        ('requested', 'Requested'),
+        ('processing', 'Processing'),
+    ]
+    inventory_refresh_status = models.CharField(
+        max_length=20, 
+        choices=INVENTORY_STATUS_CHOICES, 
+        default='idle'
+    )
     
     class Meta:
         ordering = ['-last_seen']
@@ -153,7 +167,7 @@ class AuditLog(models.Model):
     resource_id = models.CharField(max_length=255, blank=True)
     
     # Additional data (JSON)
-    metadata = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True, encoder=DjangoJSONEncoder)
     
     class Meta:
         ordering = ['-timestamp']
@@ -270,6 +284,7 @@ class RemoteCommand(models.Model):
         ('uninstall', 'Uninstall Software'),
         ('shell', 'Execute Shell Command'),
         ('reboot', 'Restart Device'),
+        ('restart_agent', 'Restart Agent Service'),
         ('registry', 'Registry Management'),
         ('service_control', 'Service Control (Start/Stop)'),
     ]

@@ -13,6 +13,7 @@
 <div class="row">
     <!-- Push Update Form -->
     <div class="col-md-5">
+        {% if perms.updates.add_update %}
         <!-- New Update Upload Card (Simplified) -->
         <div class="card shadow-sm mb-4 border-primary">
             <div class="card-header bg-primary text-white fw-bold d-flex justify-content-between align-items-center">
@@ -79,7 +80,9 @@
                 </div>
             </div>
         </div>
+        {% endif %}
 
+        {% if perms.updates.can_deploy_updates %}
         <div class="card shadow-sm mb-4">
             <div class="card-header bg-dark text-white fw-bold">
                 <i class="bi bi-send"></i> Launch Deployment
@@ -109,9 +112,27 @@
                             <label class="form-check-label" for="targetAll">All Devices ({{ device_count }})</label>
                         </div>
                         <div class="form-check">
+                            <input class="form-check-input" type="radio" name="target_type" id="targetGroup"
+                                value="group">
+                            <label class="form-check-label" for="targetGroup">Device Group</label>
+                        </div>
+                        <div class="form-check">
                             <input class="form-check-input" type="radio" name="target_type" id="targetSpecific"
                                 value="specific">
                             <label class="form-check-label" for="targetSpecific">Specific Devices</label>
+                        </div>
+
+                        <div id="deviceGroupSelect" class="mt-2" style="display:none;">
+                            <label class="form-label small fw-bold">Select Group</label>
+                            <select name="group_id" class="form-select form-select-sm">
+                                <option value="">-- Choose a Group --</option>
+                                {% for group in device_groups %}
+                                <option value="{{ group.id }}" data-count="{{ group.num_devices }}">
+                                    {{ group.name }} ({{ group.num_devices }} devices)
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text small text-info"><i class="bi bi-info-circle"></i> Updates only push to groups with at least 1 device.</div>
                         </div>
 
                         <div id="specificDevicesList" class="mt-2 p-2 border rounded bg-light"
@@ -148,10 +169,12 @@
                 </form>
             </div>
         </div>
+        {% endif %}
     </div>
 
     <!-- Recent Push Status -->
     <div class="col-md-7">
+        {% if perms.updates.can_deploy_updates %}
         <div class="card shadow-sm">
             <div class="card-header bg-transparent fw-bold d-flex justify-content-between align-items-center">
                 <span>Recent Deployments</span>
@@ -172,7 +195,7 @@
                                 <th class="ps-3">Update</th>
                                 <th>Device</th>
                                 <th>Status</th>
-                                <th class="text-end pe-3">Pushed At</th>
+                                <th class="text-end pe-3">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -181,20 +204,18 @@
                                 data-status="{{ push.status }}">
                                 <td class="ps-3">
                                     <div class="fw-bold">{{ push.update.name }}</div>
-                                    <small class="text-muted">v{{ push.update.version }} ({{ push.update.filename }})</small>
+                                    <small class="text-muted">v{{ push.update.version }}</small>
                                 </td>
-                                <td>{{ push.device.hostname }} ({{ push.device.ip_address }})</td>
+                                <td>
+                                    <div class="fw-bold">{{ push.device.hostname }}</div>
+                                    <small class="text-muted">{{ push.device.ip_address }}</small>
+                                </td>
                                 <td class="status-cell">
                                     {% if push.status == 'completed' %}
                                     <span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>
                                     {% elif push.status == 'failed' %}
                                     <span class="badge bg-danger" title="{{ push.error_message }}"><i
                                             class="bi bi-exclamation-triangle"></i> Failed</span>
-                                    {% if perms.updates.can_retry_deployments %}
-                                    <button class="btn btn-xs btn-outline-warning ms-1 retry-push" data-id="{{ push.id }}" title="Retry">
-                                        <i class="bi bi-arrow-clockwise"></i>
-                                    </button>
-                                    {% endif %}
                                     {% elif push.status == 'in_progress' %}
                                     <span class="badge bg-primary"><span class="spinner-border spinner-border-sm"
                                             role="status"></span> In Progress</span>
@@ -202,8 +223,20 @@
                                     <span class="badge bg-warning text-dark"><i class="bi bi-clock"></i> Pending</span>
                                     {% endif %}
                                 </td>
-                                <td class="text-end pe-3 time-cell">
-                                    {{ push.pushed_at|default:push.scheduled_at|timesince }} ago
+                                <td class="text-end pe-3">
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-info view-logs" data-id="{{ push.id }}" title="View Logs">
+                                            <i class="bi bi-journal-text"></i>
+                                        </button>
+                                        {% if push.status == 'failed' and perms.updates.can_retry_deployments %}
+                                        <button class="btn btn-outline-warning retry-push" data-id="{{ push.id }}" title="Retry">
+                                            <i class="bi bi-arrow-clockwise"></i>
+                                        </button>
+                                        {% endif %}
+                                    </div>
+                                    <div class="small text-muted mt-1">
+                                        {{ push.pushed_at|default:push.scheduled_at|timesince }} ago
+                                    </div>
                                 </td>
                             </tr>
                             {% empty %}
@@ -216,8 +249,38 @@
                 </div>
             </div>
         </div>
+        {% else %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> Deployment history is restricted to users with deployment permissions.
+        </div>
+        {% endif %}
     </div>
 </div>
+
+<!-- Logs Modal -->
+<div class="modal fade" id="logsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Deployment Logs</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="logsContent">
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -225,12 +288,18 @@
     $(document).ready(function () {
         let pollingInterval = null;
 
-        // Toggle specific devices list
+        // Toggle target selection UI
         $('input[name="target_type"]').change(function () {
-            if ($(this).val() === 'specific') {
+            const val = $(this).val();
+            if (val === 'specific') {
                 $('#specificDevicesList').slideDown();
+                $('#deviceGroupSelect').slideUp();
+            } else if (val === 'group') {
+                $('#specificDevicesList').slideUp();
+                $('#deviceGroupSelect').slideDown();
             } else {
                 $('#specificDevicesList').slideUp();
+                $('#deviceGroupSelect').slideUp();
             }
         });
 
@@ -246,50 +315,90 @@
         function updatePushStatus() {
             const activePushIds = [];
             $('.push-row').each(function () {
-                const status = $(this).data('status');
-                if (status === 'pending' || status === 'in_progress') {
-                    activePushIds.push($(this).data('id'));
-                }
+                activePushIds.push($(this).data('id'));
             });
 
-            if (activePushIds.length === 0) {
-                if (pollingInterval) {
-                    clearInterval(pollingInterval);
-                    pollingInterval = null;
-                }
-                return;
-            }
+            if (activePushIds.length === 0) return;
 
             const queryParams = activePushIds.map(id => `ids=${id}`).join('&');
             $.ajax({
                 url: `/api/v1/push-status/?${queryParams}`,
                 type: 'GET',
                 success: function (response) {
+                    let reloadNeeded = false;
                     response.forEach(push => {
                         const $row = $(`#push-${push.id}`);
                         if ($row.length) {
-                            $row.data('status', push.status);
-                            let statusHtml = '';
-                            if (push.status === 'completed') {
-                                statusHtml = '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>';
-                            } else if (push.status === 'failed') {
-                                statusHtml = `<span class="badge bg-danger" title="${push.error_message}"><i class="bi bi-exclamation-triangle"></i> Failed</span>`;
-                            } else if (push.status === 'in_progress') {
-                                statusHtml = '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm" role="status"></span> In Progress</span>';
-                            } else {
-                                statusHtml = '<span class="badge bg-warning text-dark"><i class="bi bi-clock"></i> Pending</span>';
+                            const oldStatus = $row.data('status');
+                            if (oldStatus !== push.status) {
+                                $row.data('status', push.status);
+                                let statusHtml = '';
+                                if (push.status === 'completed') {
+                                    statusHtml = '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>';
+                                    reloadNeeded = true; // Refresh to get final timestamps
+                                } else if (push.status === 'failed') {
+                                    statusHtml = `<span class="badge bg-danger" title="${push.error_message}"><i class="bi bi-exclamation-triangle"></i> Failed</span>`;
+                                    reloadNeeded = true;
+                                } else if (push.status === 'in_progress') {
+                                    statusHtml = '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm" role="status"></span> In Progress</span>';
+                                } else {
+                                    statusHtml = '<span class="badge bg-warning text-dark"><i class="bi bi-clock"></i> Pending</span>';
+                                }
+                                $row.find('.status-cell').html(statusHtml);
                             }
-                            $row.find('.status-cell').html(statusHtml);
                         }
                     });
+                    if (reloadNeeded) {
+                        setTimeout(() => location.reload(), 2000); // Small delay to show the "Success" badge
+                    }
                 }
             });
         }
 
-        // Start polling if there are active pushes
-        if ($('.push-row[data-status="pending"], .push-row[data-status="in_progress"]').length > 0) {
-            pollingInterval = setInterval(updatePushStatus, 5000);
-        }
+        // Always run polling in Update Center
+        setInterval(updatePushStatus, 5000);
+
+        // View Logs
+        $(document).on('click', '.view-logs', function() {
+            const pushId = $(this).data('id');
+            const $logsContent = $('#logsContent');
+            
+            $logsContent.html('<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>');
+            $('#logsModal').modal('show');
+            
+            $.ajax({
+                url: `/api/v1/audit-logs/?resource_type=UpdatePush&resource_id=${pushId}`,
+                type: 'GET',
+                success: function(response) {
+                    if (response.results && response.results.length > 0) {
+                        let html = '<div class="list-group list-group-flush">';
+                        response.results.forEach(log => {
+                            const date = new Date(log.timestamp).toLocaleString();
+                            let severityClass = 'text-primary';
+                            if (log.severity === 'error' || log.severity === 'critical') severityClass = 'text-danger';
+                            if (log.severity === 'warning') severityClass = 'text-warning';
+                            
+                            html += `
+                                <div class="list-group-item">
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h6 class="mb-1 ${severityClass}">${log.action.replace('_', ' ').toUpperCase()}</h6>
+                                        <small class="text-muted">${date}</small>
+                                    </div>
+                                    <p class="mb-1">${log.description}</p>
+                                    <small class="text-muted">IP: ${log.ip_address}</small>
+                                </div>`;
+                        });
+                        html += '</div>';
+                        $logsContent.html(html);
+                    } else {
+                        $logsContent.html('<div class="alert alert-info">No detailed logs found for this deployment.</div>');
+                    }
+                },
+                error: function() {
+                    $logsContent.html('<div class="alert alert-danger">Failed to load logs.</div>');
+                }
+            });
+        });
 
         // Handle Retry button
         $(document).on('click', '.retry-push', function() {
@@ -328,10 +437,11 @@
                 update_id: formData.get('update_id'),
                 push_to_all: targetType === 'all',
                 target_hostnames: [],
+                group_ids: [],
                 schedule: pushImmediately ? null : (schedule || null)
             };
 
-            if (!data.push_to_all) {
+            if (targetType === 'specific') {
                 $("input[name='target_hostnames']:checked").each(function () {
                     data.target_hostnames.push($(this).val());
                 });
@@ -340,6 +450,22 @@
                     alert('Please select at least one target device.');
                     return;
                 }
+            } else if (targetType === 'group') {
+                const groupId = formData.get('group_id');
+                if (!groupId) {
+                    alert('Please select a device group.');
+                    return;
+                }
+                
+                // Check device count client-side too
+                const $selected = $('select[name="group_id"] option:selected');
+                const count = parseInt($selected.data('count') || 0);
+                if (count < 1) {
+                    alert('Updates can only be pushed to groups with at least 1 device.');
+                    return;
+                }
+                
+                data.group_ids.push(groupId);
             }
 
             if (!pushImmediately && !schedule) {
@@ -405,7 +531,6 @@
                     'X-CSRFToken': formData.get('csrfmiddlewaretoken')
                 },
                 success: function (response) {
-                    $('#uploadUpdateModal').modal('hide');
                     alert('Update uploaded successfully! It is now being processed and scanned.');
                     location.reload();
                 },

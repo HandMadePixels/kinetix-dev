@@ -43,6 +43,29 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
             
         public_key_path = os.path.join(base_dir, key_filename)
         self.updater = AgentUpdater(public_key_path)
+        
+        # Command log initialization
+        self.cmd_log_path = os.path.join(base_dir, "logs", "command_history.log")
+
+    def log_command(self, cmd):
+        """Log received command to history file"""
+        try:
+            # Ensure log directory exists
+            log_dir = os.path.dirname(self.cmd_log_path)
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+
+            timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+            log_entry = {
+                "timestamp": timestamp,
+                "command": cmd.get('command'),
+                "id": cmd.get('command_id') or cmd.get('push_id'),
+                "payload": cmd.get('payload') or cmd.get('update_url', 'N/A')
+            }
+            with open(self.cmd_log_path, 'a') as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as e:
+            agent_log.error(f"Failed to log command: {e}")
 
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
@@ -107,10 +130,17 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 break
 
     def process_command(self, cmd):
-        """Execute received command"""
+        """Dispatch command to a background thread to prevent blocking"""
+        thread = threading.Thread(target=self._execute_command, args=(cmd,))
+        thread.daemon = True
+        thread.start()
+
+    def _execute_command(self, cmd):
+        """Execute received command (internal threaded method)"""
         cmd_type = cmd.get('command')
         push_id = cmd.get('push_id')
-        agent_log.info(f"Received command: {cmd_type} (Push ID: {push_id})")
+        agent_log.info(f"Processing command in background: {cmd_type}")
+        self.log_command(cmd)
         
         if cmd_type == 'update':
             url = cmd.get('update_url')
@@ -151,25 +181,38 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
         
         elif cmd_type == 'uninstall':
             command_id = cmd.get('command_id')
-            uninstall_string = cmd.get('payload')
+            uninstall_string = cmd.get('payload', '')
             agent_log.info(f"Uninstallation requested for: {uninstall_string}")
             
             try:
-                # Automatically add silent flags for common installers if missing
-                if 'msiexec.exe' in uninstall_string.lower():
-                    if '/qn' not in uninstall_string and '/quiet' not in uninstall_string:
-                        uninstall_string = uninstall_string.replace('/I', '/X').replace('/i', '/X')
-                        if '/X' not in uninstall_string:
-                            uninstall_string += " /X"
-                        uninstall_string += " /qn /norestart"
-                elif 'setup.exe' in uninstall_string.lower():
-                    if '/S' not in uninstall_string and '/s' not in uninstall_string:
-                        uninstall_string += " /S"
+                # 1. Handle quoting for paths with spaces if not already quoted
+                # We look for the first .exe or .exe" to find the split point
+                adjusted_cmd = uninstall_string.strip()
+                if adjusted_cmd and not adjusted_cmd.startswith('"'):
+                    if '.exe' in adjusted_cmd.lower():
+                        exe_idx = adjusted_cmd.lower().find('.exe') + 4
+                        exe_path = adjusted_cmd[:exe_idx]
+                        args = adjusted_cmd[exe_idx:]
+                        if ' ' in exe_path:
+                            adjusted_cmd = f'"{exe_path}"{args}'
+                
+                # 2. Automatically add silent flags for common installers if missing
+                lower_cmd = adjusted_cmd.lower()
+                if 'msiexec.exe' in lower_cmd:
+                    if '/qn' not in lower_cmd and '/quiet' not in lower_cmd:
+                        adjusted_cmd = adjusted_cmd.replace('/I', '/X').replace('/i', '/X')
+                        if '/X' not in adjusted_cmd and '/x' not in lower_cmd:
+                            adjusted_cmd += " /X"
+                        adjusted_cmd += " /qn /norestart"
+                elif 'setup.exe' in lower_cmd or 'uninstall.exe' in lower_cmd:
+                    # Common silent flags for custom uninstallers
+                    if not any(flag in lower_cmd for flag in ['/s', '/S', '-s', '-S', '/quiet', '/silent']):
+                        adjusted_cmd += " /S"
 
-                agent_log.info(f"Executing adjusted command: {uninstall_string}")
+                agent_log.info(f"Executing adjusted command: {adjusted_cmd}")
                 
                 process = subprocess.run(
-                    uninstall_string, 
+                    adjusted_cmd, 
                     shell=True, 
                     capture_output=True, 
                     text=True, 
@@ -180,13 +223,16 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                     msg = "Success" + (" (Reboot required)" if process.returncode != 0 else "")
                     self.client.send_command_status(command_id, 'completed', msg)
                 else:
-                    error_msg = f"Uninstaller returned code {process.returncode}. Error: {process.stderr}"
+                    error_msg = f"Uninstaller returned code {process.returncode}. Output: {process.stdout} Error: {process.stderr}"
+                    agent_log.error(f"Uninstall failed: {error_msg}")
                     self.client.send_command_status(command_id, 'failed', error_msg)
             except subprocess.TimeoutExpired:
                 error_msg = "Uninstallation timed out after 5 minutes"
+                agent_log.error(error_msg)
                 self.client.send_command_status(command_id, 'failed', error_msg)
             except Exception as e:
                 error_msg = f"Failed to execute uninstall command: {e}"
+                agent_log.error(error_msg)
                 self.client.send_command_status(command_id, 'failed', error_msg)
         
         elif cmd_type == 'registry':
@@ -239,7 +285,7 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 import pywintypes
                 data = json.loads(payload_str)
                 service_name = data.get('service_name')
-                action = data.get('action') # 'start' or 'stop'
+                action = data.get('action') # 'start', 'stop', 'restart'
                 
                 try:
                     if action == 'start':
@@ -248,6 +294,9 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                     elif action == 'stop':
                         win32serviceutil.StopService(service_name, None)
                         msg = f"Stopped service {service_name}"
+                    elif action == 'restart':
+                        win32serviceutil.RestartService(service_name)
+                        msg = f"Restarted service {service_name}"
                     else:
                         raise ValueError(f"Invalid action: {action}")
                 except pywintypes.error as e:
@@ -263,6 +312,52 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 agent_log.info(msg)
             except Exception as e:
                 error_msg = f"Service control error: {e}"
+                agent_log.error(error_msg)
+                self.client.send_command_status(command_id, 'failed', error_msg)
+
+        elif cmd_type == 'service_config':
+            command_id = cmd.get('command_id')
+            payload_str = cmd.get('payload')
+            try:
+                import win32service
+                data = json.loads(payload_str)
+                service_name = data.get('service_name')
+                startup_type = data.get('startup_type') # 'automatic', 'manual', 'disabled', 'delayed'
+                
+                hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
+                hsvc = win32service.OpenService(hscm, service_name, win32service.SERVICE_CHANGE_CONFIG | win32service.SERVICE_QUERY_CONFIG)
+                
+                startup_map = {
+                    'automatic': win32service.SERVICE_AUTO_START,
+                    'manual': win32service.SERVICE_DEMAND_START,
+                    'disabled': win32service.SERVICE_DISABLED,
+                    'delayed': win32service.SERVICE_AUTO_START
+                }
+                
+                dwStartType = startup_map.get(startup_type)
+                if dwStartType is None:
+                    raise ValueError(f"Invalid startup type: {startup_type}")
+                
+                # Change basic config
+                win32service.ChangeServiceConfig(
+                    hsvc, win32service.SERVICE_NO_CHANGE, dwStartType, 
+                    win32service.SERVICE_NO_CHANGE, None, None, 0, None, None, None, None
+                )
+                
+                # Handle Delayed Start if requested
+                if startup_type == 'delayed':
+                    win32service.ChangeServiceConfig2(hsvc, win32service.SERVICE_CONFIG_DELAYED_AUTO_START_INFO, True)
+                elif startup_type == 'automatic':
+                    win32service.ChangeServiceConfig2(hsvc, win32service.SERVICE_CONFIG_DELAYED_AUTO_START_INFO, False)
+                
+                win32service.CloseServiceHandle(hsvc)
+                win32service.CloseServiceHandle(hscm)
+                
+                msg = f"Changed {service_name} startup to {startup_type}"
+                self.client.send_command_status(command_id, 'completed', msg)
+                agent_log.info(msg)
+            except Exception as e:
+                error_msg = f"Service config error: {e}"
                 agent_log.error(error_msg)
                 self.client.send_command_status(command_id, 'failed', error_msg)
 
@@ -288,38 +383,83 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
             command_id = cmd.get('command_id')
             message = cmd.get('payload', 'The restart has been requested by administrator.')
             try:
+                # Use absolute paths for everything
                 if getattr(sys, 'frozen', False):
                     base_dir = os.path.dirname(sys.executable)
+                    exe_path = sys.executable
+                    run_cmd = f'"{exe_path}" "{message}" "{socket.gethostname()}" "0"'
                 else:
                     base_dir = os.path.dirname(os.path.abspath(__file__))
+                    python_exe = sys.executable
+                    gui_path = os.path.join(base_dir, "gui.py")
+                    run_cmd = f'"{python_exe}" "{gui_path}" "{message}" "{socket.gethostname()}" "0"'
                 
-                gui_path = os.path.join(base_dir, "gui.py")
-                python_exe = sys.executable
+                # To bypass schtasks quoting hell, we write the command to a temporary batch file
+                # Use C:\Users\Public as it is accessible by both SYSTEM and interactive users
+                public_temp = os.path.join(os.environ.get('SystemDrive', 'C:'), 'Users', 'Public', 'KinetixAgent')
+                if not os.path.exists(public_temp):
+                    os.makedirs(public_temp)
                 
+                temp_bat = os.path.join(public_temp, f"reboot_{int(time.time())}.bat")
+                temp_log = temp_bat + ".log"
+                
+                with open(temp_bat, 'w') as f:
+                    f.write("@echo off\n")
+                    f.write(f"echo [%date% %time%] Starting Reboot UI > \"{temp_log}\"\n")
+                    f.write(f"echo Command: {run_cmd} >> \"{temp_log}\"\n")
+                    f.write(f"{run_cmd} >> \"{temp_log}\" 2>&1\n")
+                    f.write(f"echo [%date% %time%] UI process exited with code %errorlevel% >> \"{temp_log}\"\n")
+                    f.write(f"del \"%~f0\" & exit\n")
+
                 # To bypass Session 0 isolation, we use schtasks to run the process in the interactive session.
-                # We create a temporary task that runs as the currently logged-on user.
                 task_name = f"KinetixRebootUI_{int(time.time())}"
                 
-                # Command to run: python.exe gui.py "message" "hostname" "0"
-                # We need to escape double quotes for the schtasks command
-                escaped_msg = message.replace('"', '\\"')
-                run_cmd = f'"{python_exe}" "{gui_path}" "{escaped_msg}" "{socket.gethostname()}" "0"'
+                # Correct triple-quote strategy for schtasks /tr:
+                # The entire command must be in quotes, and the internal path must also be in quotes.
+                # Format: schtasks /create ... /tr "\"C:\path\to\script.bat\""
+                tr_cmd = f'\"\\\"{temp_bat}\\\"\"'
+                full_task_cmd = f'schtasks /create /tn \"{task_name}\" /tr {tr_cmd} /sc once /st 00:00 /ru \"INTERACTIVE\" /it /f /rl highest'
+                agent_log.info(f"Creating task: {full_task_cmd}")
                 
-                # Create and run the task immediately in the interactive session
-                # /sc once /st 00:00 is just to satisfy requirements, /it makes it interactive
-                subprocess.run(
-                    f'schtasks /create /tn "{task_name}" /tr "{run_cmd}" /sc once /st 00:00 /it /f /rl highest',
-                    shell=True, capture_output=True, text=True
-                )
-                subprocess.run(f'schtasks /run /tn "{task_name}"', shell=True, capture_output=True)
+                create_res = subprocess.run(full_task_cmd, shell=True, capture_output=True, text=True)
+                if create_res.returncode != 0:
+                    # Fallback for older Windows
+                    full_task_cmd = f'schtasks /create /tn \"{task_name}\" /tr {tr_cmd} /sc once /st 00:00 /sd 01/01/2099 /ru \"INTERACTIVE\" /it /f /rl highest'
+                    create_res = subprocess.run(full_task_cmd, shell=True, capture_output=True, text=True)
+                    if create_res.returncode != 0:
+                        if os.path.exists(temp_bat): os.remove(temp_bat)
+                        raise Exception(f"schtasks create failed: {create_res.stderr}")
+                    
+                run_res = subprocess.run(f'schtasks /run /tn "{task_name}"', shell=True, capture_output=True, text=True)
+                if run_res.returncode != 0:
+                    if os.path.exists(temp_bat): os.remove(temp_bat)
+                    raise Exception(f"schtasks run failed: {run_res.stderr}")
                 
-                # Clean up the task after a short delay (it stays running, just the registration is removed)
-                threading.Timer(10, lambda: subprocess.run(f'schtasks /delete /tn "{task_name}" /f', shell=True, capture_output=True)).start()
+                # Clean up the task after a short delay (batch file self-deletes)
+                threading.Timer(60, lambda: subprocess.run(f'schtasks /delete /tn "{task_name}" /f', shell=True, capture_output=True)).start()
 
-                self.client.send_command_status(command_id, 'completed', "Interactive UI triggered via scheduled task")
-                agent_log.info("Triggered reboot UI via scheduled task")
+                self.client.send_command_status(command_id, 'completed', "Interactive UI triggered via scheduled task batch wrapper")
+                agent_log.info("Triggered reboot UI via scheduled task batch wrapper")
             except Exception as e:
                 error_msg = f"Failed to launch reboot UI: {e}"
+                agent_log.error(error_msg)
+                self.client.send_command_status(command_id, 'failed', error_msg)
+
+        elif cmd_type == 'restart_agent':
+            command_id = cmd.get('command_id')
+            agent_log.info("Agent self-restart requested")
+            try:
+                # Send success status before we actually stop the service
+                self.client.send_command_status(command_id, 'completed', "Agent restart initiated")
+                
+                # Use sc instead of net for better service control compatibility
+                # We add a short delay to ensure the status message is fully sent
+                restart_cmd = 'timeout /t 3 /nobreak && sc stop KinetixAgent && timeout /t 2 /nobreak && sc start KinetixAgent'
+                subprocess.Popen(f'cmd /c "{restart_cmd}"', shell=True)
+                
+                agent_log.info("Restart command dispatched to external process")
+            except Exception as e:
+                error_msg = f"Failed to initiate agent restart: {e}"
                 agent_log.error(error_msg)
                 self.client.send_command_status(command_id, 'failed', error_msg)
 

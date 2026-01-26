@@ -100,7 +100,7 @@
         </div>
     </div>
 
-    <!-- Quick Actions (New) -->
+    <!-- Quick Actions -->
     <div class="col-md-4">
         <div class="card h-100 shadow-sm border-success">
             <div class="card-header bg-success text-white fw-bold">Quick Actions</div>
@@ -108,6 +108,7 @@
                 <a href="{% url 'dashboard:update_center' %}" class="btn btn-success"><i class="bi bi-cloud-arrow-up"></i> Push New Updates</a>
                 <a href="{% url 'dashboard:device_list' %}" class="btn btn-outline-primary"><i class="bi bi-laptop"></i> View Device List</a>
                 <a href="{% url 'dashboard:application_inventory' %}" class="btn btn-outline-primary"><i class="bi bi-box-seam"></i> View App Inventory</a>
+                <a href="{% url 'dashboard:service_inventory' %}" class="btn btn-outline-primary"><i class="bi bi-gear-wide-connected"></i> View Service Inventory</a>
                 <a href="/admin/" class="btn btn-outline-dark"><i class="bi bi-shield-lock"></i> Access Admin Panel</a>
                 <form action="{% url 'dashboard:logout' %}" method="post" class="d-grid">
                     {% csrf_token %}
