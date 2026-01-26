@@ -5,7 +5,7 @@ This document provides a comprehensive security review, STRIDE threat model, and
 ---
 
 ## 1. Executive Summary
-Kinetix is designed with a "Security-First" architecture. It employs industry-standard cryptographic primitives, robust authentication mechanisms, and proactive defense strategies. The pull-based architecture minimizes the attack surface by avoiding the need for open inbound ports on client devices.
+Kinetix is designed with a "Security-First" architecture. It employs industry-standard cryptographic primitives, robust authentication mechanisms, and proactive defense strategies. The pull-based architecture minimizes the attack surface by avoiding the need for open inbound ports on client devices. **v1.4.0 update: Enhanced asynchronous audit logging and session-interactive bypass hardening.**
 
 ---
 
@@ -23,9 +23,9 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 
 ### 🛡️ Defense-in-Depth
 - **Malware Scanning**: Integrated VirusTotal and ClamAV scanning for all uploads.
-- **Session 0 Isolation Bypass**: Secure use of Scheduled Tasks (`schtasks`) to bridge the isolation gap for interactive GUIs without compromising service security.
+- **Session 0 Isolation Bypass**: Hardened use of Scheduled Tasks (`schtasks`) with `/ru "INTERACTIVE"` and triple-quoting to bridge the isolation gap for interactive GUIs safely.
 - **Rate Limiting**: Custom `RateLimitMiddleware` combined with DRF Throttling protects against brute-force and DoS attacks.
-- **Audit Logging**: Every action (user and device) is captured in a tamper-resistant database log and a rotating file log.
+- **Asynchronous Audit Logging**: Request-level logging is handled via Celery tasks to prevent performance degradation and ensure traceability.
 
 ---
 
@@ -49,7 +49,7 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 | **Remote Shell Abuse** | Low | Critical | **High** | **Mitigated**: Requires specific `can_execute_shell` permission; fully logged in audit trail. |
 | **Insecure Update Delivery** | Very Low | Critical | **Medium** | **Mitigated**: RSA-4096 signing prevents unauthorized software execution. |
 | **Credential Exposure in Logs** | Medium | Medium | **Medium** | **Mitigated**: `custom_exception_handler` masks sensitive data; Fernet encryption for fields. |
-| **Session 0 Isolation Issues** | Low | Low | **Low** | **Fixed**: Used `schtasks` to correctly bridge interactive sessions. |
+| **Session 0 Isolation Issues** | Low | Low | **Low** | **Fixed**: Used `schtasks` with `/ru INTERACTIVE` to correctly bridge interactive sessions. |
 | **CSRF on Dashboard** | Low | High | **Medium** | **Mitigated**: `CsrfViewMiddleware` enabled; `Strict` cookie policies; meta-tag fallback for AJAX. |
 
 ---
@@ -74,10 +74,11 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 - **Safe Defaults**: `DEBUG=False` by default in production.
 - **Secure Handling of Secrets**: Use of `python-decouple` for environment variables and `keyring` for agent secrets.
 - **Strong Hashing**: Use of SHA-256 for file integrity checks.
+- **Thread Safety**: Agent uses multithreading for commands to maintain service responsiveness.
 
 ### ⚠️ Areas for Improvement
 - **Shell Command Output**: Currently returns raw shell output. For extreme security environments, consider filtering or truncating very large outputs to prevent DoS via log-filling.
-- **SQLite Database**: While sufficient for small-to-medium fleets, migrating to PostgreSQL is recommended for larger enterprises to benefit from more granular row-level locking and security features.
+- **Process Quoting**: (Improved) Previously identified issues with `schtasks` path quoting have been resolved using triple-quoting and batch wrappers.
 
 ---
 **Security Status: HARDENED**
