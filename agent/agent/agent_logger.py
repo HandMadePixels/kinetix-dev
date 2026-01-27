@@ -14,14 +14,32 @@ except ImportError:
 class AgentLogger:
     """Handles logging to file and Windows Event Log"""
     
-    def __init__(self, name="KinetixAgent"):
+    def __init__(self, name="KinetixAgent", config=None):
         self.logger = logging.getLogger(name)
         self.logger.setLevel(logging.INFO)
+        self.name = name
         
         # Formatter
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         
-        # File Handler
+        # Console Handler (always add)
+        self.console_handler = logging.StreamHandler(sys.stdout)
+        self.console_handler.setFormatter(self.formatter)
+        self.logger.addHandler(self.console_handler)
+        
+        if config:
+            self.setup_file_handler(config)
+        else:
+            # Add a placeholder file handler or wait for reconfiguration
+            pass
+
+    def setup_file_handler(self, config):
+        """Configure or reconfigure the file rotation handler"""
+        # Remove existing file handlers if any
+        for handler in self.logger.handlers[:]:
+            if isinstance(handler, logging.handlers.RotatingFileHandler):
+                self.logger.removeHandler(handler)
+
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -31,18 +49,17 @@ class AgentLogger:
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
         
+        # Use values from config
+        max_bytes = getattr(config, 'max_log_size', 5*1024*1024)
+        backup_count = getattr(config, 'max_log_backups', 3)
+
         file_handler = logging.handlers.RotatingFileHandler(
             os.path.join(log_dir, "agent.log"),
-            maxBytes=10*1024*1024,
-            backupCount=5
+            maxBytes=max_bytes,
+            backupCount=backup_count
         )
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(self.formatter)
         self.logger.addHandler(file_handler)
-        
-        # Console Handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        self.logger.addHandler(console_handler)
 
     def info(self, msg):
         self.logger.info(msg)

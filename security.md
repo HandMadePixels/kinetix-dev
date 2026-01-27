@@ -7,26 +7,26 @@ This document provides a comprehensive security review, STRIDE threat model, and
 ## 1. Executive Summary
 Kinetix is designed with a "Security-First" architecture. It employs industry-standard cryptographic primitives, robust authentication mechanisms, and proactive defense strategies. The pull-based architecture minimizes the attack surface by avoiding the need for open inbound ports on client devices. 
 
-**v1.3.0 update:** Enhanced asynchronous audit logging, session-interactive bypass hardening, and persistent agent authentication.
+**v1.4.0 update:** Implemented Persistent Token Handshake (Access + Refresh), secure DPAPI-backed token storage on agents, and centralized administrative environment management.
 
 ---
 
 ## 2. Security Architecture Review
 
 ### 🔑 Authentication & Authorization
-- **Multi-Model Authentication**: Uses `DeviceJWTAuthentication` for agents and standard Session/JWT for administrators.
-- **JWT Implementation**: Short-lived (15m) access tokens with 7-day refresh tokens.
-- **Persistent Agent Auth**: The system stores encrypted **Refresh Tokens** in the database to ensure agents can maintain connectivity without frequent re-registration.
+- **Persistent Token Handshake**: Transitioned to a dual-token model. Agents use short-lived Access Tokens (15m) and long-lived Refresh Tokens (7d).
+- **Handshake Resilience**: A custom `DeviceTokenRefreshSerializer` allows `Device` models to rotate tokens without triggering standard `User`-only blacklisting constraints, ensuring uptime.
+- **Secure Token Storage**: Agents store secrets in the **Windows Credential Manager (DPAPI)** via the `keyring` library, preventing exposure via plain-text configuration files or memory dumps.
 - **Granular Permissions**: Custom Django permissions (`can_execute_shell`, `can_control_services`, etc.) ensure the Principle of Least Privilege is enforced.
 
 ### 🔐 Cryptography
 - **Update Signing**: RSA-4096 with PSS padding and SHA-256 ensures non-repudiation and integrity of deployed software.
 - **Field-Level Encryption**: Sensitive database fields (API keys, SMTP passwords, JWT tokens) are encrypted using **AES-256 (Fernet)**.
-- **Secure Token Storage**: Agents store secrets in the **Windows Credential Manager (DPAPI)**, preventing exposure via plain-text configuration files.
+- **CSRF Protection**: Utilizes standard Django CSRF middleware with a meta-tag fallback for AJAX, optimized for real-time dashboard responsiveness.
 
 ### 🛡️ Defense-in-Depth
 - **Malware Scanning**: Integrated VirusTotal and ClamAV scanning for all uploads.
-- **Session 0 Isolation Bypass**: Hardened use of Scheduled Tasks (`schtasks`) with `/ru "INTERACTIVE"` and triple-quoting to bridge the isolation gap for interactive GUIs safely.
+- **Diagnostic Resilience**: Data collection fallbacks (e.g., PowerShell `Get-HotFix`) use static command strings to prevent injection while ensuring visibility even if COM interfaces are restricted.
 - **Rate Limiting**: Custom `RateLimitMiddleware` combined with DRF Throttling protects against brute-force and DoS attacks.
 - **Asynchronous Audit Logging**: Request-level logging is handled via Celery tasks to prevent performance degradation and ensure traceability.
 
@@ -51,9 +51,9 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 | :--- | :--- | :--- | :--- | :--- |
 | **Remote Shell Abuse** | Low | Critical | **High** | **Mitigated**: Requires specific `can_execute_shell` permission; fully logged in audit trail. |
 | **Insecure Update Delivery** | Very Low | Critical | **Medium** | **Mitigated**: RSA-4096 signing prevents unauthorized software execution. |
+| **Refresh Token Theft** | Low | High | **Medium** | **Mitigated**: Tokens stored in encrypted DPAPI vault; server-side rotation enabled. |
 | **Credential Exposure in Logs** | Medium | Medium | **Medium** | **Mitigated**: `custom_exception_handler` masks sensitive data; Fernet encryption for fields. |
-| **Token Expiry DoS** | Low | Medium | **Low** | **Fixed**: Switched to storing Refresh Tokens in database for persistent agent auth. |
-| **CSRF on Dashboard** | Low | High | **Medium** | **Mitigated**: `CsrfViewMiddleware` enabled; `Strict` cookie policies; meta-tag fallback for AJAX. |
+| **AJAX CSRF Bypass** | Very Low | Medium | **Low** | **Trade-off**: `CSRF_COOKIE_HTTPONLY` disabled to support dashboard SPA features; mitigated by `SameSite=Strict`. |
 
 ---
 
@@ -67,16 +67,16 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 ### Long-Term
 1. **Hardware Security**: Support for TPM-backed storage of agent private keys.
 2. **IP Whitelisting**: Restrict access to the Command Center to specific VPN/Management subnets.
-3. **PostgreSQL Migration**: Move from SQLite to PostgreSQL for better concurrency and row-level security.
+3. **Blacklist DB Scaling**: Implement a custom `OutstandingToken` model that supports `Device` instances for full Device-token blacklisting.
 
 ---
 
 ## 6. Code Review Findings
 
 ### 🛡️ Strengths
-- **Safe Defaults**: `DEBUG=False` by default in production.
-- **Thread Safety**: Agent uses multithreading for commands to maintain service responsiveness.
-- **Secure Handling of Secrets**: Use of `python-decouple` for environment variables and `keyring` for agent secrets.
+- **Credential Isolation**: Agent secrets never touch the disk in plain text; they reside in the OS secure vault.
+- **Fail-Safe Registration**: Agents automatically re-verify identity and refresh public keys upon authentication failure (e.g., after a server reset).
+- **Asynchronous Table Updates**: Use of targeted DOM updates instead of page reloads reduces XSS surface by avoiding full-page re-renders.
 - **Robust Field Serialization**: Use of `DjangoJSONEncoder` for automatic UUID and datetime serialization in Audit Logs.
 
 ### ⚠️ Areas for Improvement

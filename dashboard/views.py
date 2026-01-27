@@ -80,6 +80,9 @@ class DashboardIndexView(LoginRequiredMixin, TemplateView):
         context['os_dist_labels'] = [item['os_version'] or 'Unknown' for item in os_dist]
         context['os_dist_data'] = [item['count'] for item in os_dist]
         
+        # Recent Deployments
+        context['recent_pushes'] = UpdatePush.objects.select_related('update', 'device').order_by('-scheduled_at', '-pushed_at')[:5]
+        
         return context
 
 class AuditLogListView(LoginRequiredMixin, ListView):

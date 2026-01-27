@@ -312,6 +312,24 @@
             }
         });
 
+        // Helper to format time since
+        function timeSince(date) {
+            if (!date) return "N/A";
+            const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+            if (seconds < 60) return "just now";
+            let interval = seconds / 31536000;
+            if (interval > 1) return Math.floor(interval) + " years";
+            interval = seconds / 2592000;
+            if (interval > 1) return Math.floor(interval) + " months";
+            interval = seconds / 86400;
+            if (interval > 1) return Math.floor(interval) + " days";
+            interval = seconds / 3600;
+            if (interval > 1) return Math.floor(interval) + " hours";
+            interval = seconds / 60;
+            if (interval > 1) return Math.floor(interval) + " minutes";
+            return Math.floor(seconds) + " seconds";
+        }
+
         function updatePushStatus() {
             const activePushIds = [];
             $('.push-row').each(function () {
@@ -325,20 +343,28 @@
                 url: `/api/v1/push-status/?${queryParams}`,
                 type: 'GET',
                 success: function (response) {
-                    let reloadNeeded = false;
                     response.forEach(push => {
                         const $row = $(`#push-${push.id}`);
                         if ($row.length) {
                             const oldStatus = $row.data('status');
+                            
+                            // 1. Update Status Badge if changed
                             if (oldStatus !== push.status) {
                                 $row.data('status', push.status);
                                 let statusHtml = '';
                                 if (push.status === 'completed') {
                                     statusHtml = '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>';
-                                    reloadNeeded = true; // Refresh to get final timestamps
                                 } else if (push.status === 'failed') {
                                     statusHtml = `<span class="badge bg-danger" title="${push.error_message}"><i class="bi bi-exclamation-triangle"></i> Failed</span>`;
-                                    reloadNeeded = true;
+                                    
+                                    // Dynamically add retry button if it doesn't exist
+                                    if ($row.find('.retry-push').length === 0) {
+                                        $row.find('.btn-group').append(`
+                                            <button class="btn btn-outline-warning retry-push" data-id="${push.id}" title="Retry">
+                                                <i class="bi bi-arrow-clockwise"></i>
+                                            </button>
+                                        `);
+                                    }
                                 } else if (push.status === 'in_progress') {
                                     statusHtml = '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm" role="status"></span> In Progress</span>';
                                 } else {
@@ -346,11 +372,12 @@
                                 }
                                 $row.find('.status-cell').html(statusHtml);
                             }
+
+                            // 2. Update Timestamp (relative)
+                            const timeVal = push.pushed_at || push.scheduled_at;
+                            $row.find('.small.text-muted.mt-1').text(timeSince(timeVal) + " ago");
                         }
                     });
-                    if (reloadNeeded) {
-                        setTimeout(() => location.reload(), 2000); // Small delay to show the "Success" badge
-                    }
                 }
             });
         }

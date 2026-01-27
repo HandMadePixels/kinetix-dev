@@ -104,6 +104,11 @@ class Device(models.Model):
                 self.ip_address = ip_address
         self.save(update_fields=['last_seen', 'last_ip', 'ip_address'])
 
+    def get_latest_refresh_time(self):
+        """Get the timestamp of the latest inventory snapshot"""
+        snapshot = self.inventory_snapshots.order_by('-collected_at').first()
+        return snapshot.collected_at if snapshot else None
+
 
 class DeviceGroup(models.Model):
     """Device grouping for bulk operations"""

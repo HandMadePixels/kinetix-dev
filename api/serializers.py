@@ -5,15 +5,49 @@ DRF Serializers for API endpoints
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.db.models import Count
+from django.conf import settings
 from core.models import Device, DeviceGroup, AuditLog, RemoteCommand
 from inventory.models import ServiceInventory, ApplicationInventory, WindowsUpdate
 from updates.models import Update, UpdatePush
 
 
+class DeviceTokenRefreshSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+    access = serializers.CharField(read_only=True)
+
+    def validate(self, attrs):
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework_simplejwt.exceptions import TokenError
+        
+        refresh = RefreshToken(attrs['refresh'])
+
+        data = {'access': str(refresh.access_token)}
+
+        if settings.SIMPLE_JWT['ROTATE_REFRESH_TOKENS']:
+            if settings.SIMPLE_JWT['BLACKLIST_AFTER_ROTATION']:
+                try:
+                    # Attempt to blacklist if it's a User token
+                    # If it's a Device token, it won't be in OutstandingToken table
+                    # and this might fail or do nothing depending on SimpleJWT version.
+                    # We'll try to blacklist but catch errors.
+                    refresh.blacklist()
+                except Exception:
+                    # If it fails (e.g. because it's a Device token not in DB), just ignore
+                    pass
+
+            refresh.set_jti()
+            refresh.set_exp()
+            refresh.set_iat()
+
+            data['refresh'] = str(refresh)
+
+        return data
+
 class DeviceSerializer(serializers.ModelSerializer):
     """Serializer for Device model"""
     
     is_online = serializers.SerializerMethodField()
+    latest_refresh_time = serializers.SerializerMethodField()
     group_name = serializers.CharField(source='group.name', read_only=True, allow_null=True)
     group = serializers.PrimaryKeyRelatedField(queryset=DeviceGroup.objects.all(), required=False, allow_null=True)
     
@@ -23,9 +57,10 @@ class DeviceSerializer(serializers.ModelSerializer):
             'id', 'hostname', 'ip_address', 'os_version', 'status',
             'is_online', 'group', 'group_name', 'registered_at',
             'last_seen', 'last_ip', 'notes', 'current_user',
-            'last_boot_time', 'uptime'
+            'last_boot_time', 'uptime', 'inventory_refresh_status',
+            'latest_refresh_time'
         ]
-        read_only_fields = ['id', 'registered_at', 'last_seen', 'last_ip']
+        read_only_fields = ['id', 'registered_at', 'last_seen', 'last_ip', 'latest_refresh_time']
         # Ensure hostname uniqueness doesn't block updates of the same record
         extra_kwargs = {
             'hostname': {'validators': []} 
@@ -40,6 +75,9 @@ class DeviceSerializer(serializers.ModelSerializer):
     
     def get_is_online(self, obj):
         return obj.is_online()
+
+    def get_latest_refresh_time(self, obj):
+        return obj.get_latest_refresh_time()
 
 
 class DeviceRegistrationSerializer(serializers.Serializer):
@@ -82,8 +120,11 @@ class DeviceRegistrationSerializer(serializers.Serializer):
                 **validated_data
             )
         
-        # Generate JWT token for device
-        refresh = RefreshToken.for_user(device)
+        # Generate JWT token manually to bypass OutstandingToken/User constraint
+        # (Device is not a User model, so token_blacklist app fails with .for_user)
+        refresh = RefreshToken()
+        refresh['user_id'] = str(device.id)
+        
         access_token = str(refresh.access_token)
         
         # Store encrypted refresh token for persistence

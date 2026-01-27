@@ -31,6 +31,10 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
         
         # Initialize components
         self.config = AgentConfig()
+        
+        # Configure logger with actual settings
+        agent_log.setup_file_handler(self.config)
+        
         self.client = AgentClient(self.config)
         self.collector = InventoryCollector()
         

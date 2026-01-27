@@ -53,6 +53,7 @@ if __name__ == '__main__':
                 if not new_url.startswith("http"):
                     new_url = "http://" + new_url
                 config = AgentConfig()
+                agent_log.setup_file_handler(config)
                 config.server_url = new_url
                 print(f"Server URL updated to: {new_url}")
                 print("Please restart the service for changes to take effect: kinetix_agent.exe restart")
@@ -60,6 +61,7 @@ if __name__ == '__main__':
                 print("Usage: kinetix_agent.exe set-server <url>")
         elif cmd == "register":
             config = AgentConfig()
+            agent_log.setup_file_handler(config)
             client = AgentClient(config)
             coll = InventoryCollector()
             sys_info = coll.get_system_info()
@@ -69,6 +71,7 @@ if __name__ == '__main__':
                 print("Registration failed.")
         elif cmd == "inventory":
             config = AgentConfig()
+            agent_log.setup_file_handler(config)
             client = AgentClient(config)
             coll = InventoryCollector()
             print("Collecting inventory...")

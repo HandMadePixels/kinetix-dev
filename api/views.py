@@ -20,7 +20,7 @@ from api.serializers import (
     UpdateUploadSerializer, PushUpdateSerializer,
     UpdatePushSerializer, AuditLogSerializer,
     DeviceGroupSerializer, UpdateStatusSerializer,
-    RemoteCommandSerializer
+    RemoteCommandSerializer, DeviceTokenRefreshSerializer
 )
 
 
@@ -588,8 +588,33 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 
 class CustomTokenRefreshView(TokenRefreshView):
-    """Custom JWT token refresh view"""
-    pass
+    """Custom JWT token refresh view with audit logging"""
+    serializer_class = DeviceTokenRefreshSerializer
+    
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        
+        if response.status_code == 200:
+            # We don't necessarily have the user in the request for refresh
+            # SimpleJWT refresh view doesn't authenticate the request itself
+            AuditLog.objects.create(
+                ip_address=self.get_client_ip(),
+                action='login', # Re-using login action or we could add a new one
+                severity='info',
+                description="Token refreshed successfully",
+                metadata={'type': 'refresh'}
+            )
+        
+        return response
+
+    def get_client_ip(self):
+        """Extract client IP from request"""
+        x_forwarded_for = self.request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = self.request.META.get('REMOTE_ADDR', '0.0.0.0')
+        return ip
 
 
 class UpdateStatusView(generics.CreateAPIView):

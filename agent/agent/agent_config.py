@@ -20,6 +20,8 @@ class AgentConfig:
         'Agent': {
             'ID': '',
             'Version': '1.0.0',
+            'MaxLogSize': '5242880',  # 5MB
+            'MaxLogBackups': '3',
         }
     }
 
@@ -80,6 +82,14 @@ class AgentConfig:
         self.config.set('Agent', 'ID', value)
         self.save()
 
+    @property
+    def max_log_size(self):
+        return self.config.getint('Agent', 'MaxLogSize', fallback=5*1024*1024)
+
+    @property
+    def max_log_backups(self):
+        return self.config.getint('Agent', 'MaxLogBackups', fallback=3)
+
     def get_token(self):
         """Retrieve the JWT token securely from Windows Credential Manager"""
         return keyring.get_password("KinetixAgent", "jwt_token")
@@ -88,9 +98,22 @@ class AgentConfig:
         """Store the JWT token securely in Windows Credential Manager"""
         keyring.set_password("KinetixAgent", "jwt_token", token)
 
-    def clear_token(self):
-        """Remove the JWT token from storage"""
+    def get_refresh_token(self):
+        """Retrieve the Refresh token securely from Windows Credential Manager"""
+        return keyring.get_password("KinetixAgent", "refresh_token")
+
+    def set_refresh_token(self, token):
+        """Store the Refresh token securely in Windows Credential Manager"""
+        keyring.set_password("KinetixAgent", "refresh_token", token)
+
+    def clear_tokens(self):
+        """Remove both JWT and Refresh tokens from storage"""
         try:
             keyring.delete_password("KinetixAgent", "jwt_token")
+        except keyring.errors.PasswordDeleteError:
+            pass
+        
+        try:
+            keyring.delete_password("KinetixAgent", "refresh_token")
         except keyring.errors.PasswordDeleteError:
             pass

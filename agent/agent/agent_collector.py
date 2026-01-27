@@ -284,42 +284,62 @@ class InventoryCollector:
             import pythoncom
             import re
             
-            pythoncom.CoInitialize()
-            session = win32com.client.Dispatch("Microsoft.Update.Session")
-            searcher = session.CreateUpdateSearcher()
-            
-            # Get total history count
-            count = searcher.GetTotalHistoryCount()
-            if count == 0:
-                return []
+            try:
+                pythoncom.CoInitialize()
+                session = win32com.client.Dispatch("Microsoft.Update.Session")
+                searcher = session.CreateUpdateSearcher()
                 
-            # Query history (get last 50 updates for performance)
-            start_index = max(0, count - 50)
-            history = searcher.QueryHistory(start_index, 50)
-            
-            for item in history:
-                title = str(item.Title)
-                # Extract KB ID using regex (e.g., KB5034441)
-                kb_match = re.search(r'(KB\d+)', title)
-                kb_id = kb_match.group(1) if kb_match else ""
-                
-                # Convert pywintypes.datetime to isoformat
-                # item.Date is a pywintypes.datetime which behaves like datetime but might need conversion
-                installed_at = str(item.Date)
-                try:
-                    # Usually it's already in a good string format or can be converted
-                    # Format: 2024-01-26 12:34:56+00:00
-                    pass
-                except:
-                    installed_at = None
+                # Get total history count
+                count = searcher.GetTotalHistoryCount()
+                if count > 0:
+                    # Query history (get last 50 updates for performance)
+                    start_index = max(0, count - 50)
+                    history = searcher.QueryHistory(start_index, 50)
+                    
+                    for item in history:
+                        title = str(item.Title)
+                        kb_match = re.search(r'(KB\d+)', title)
+                        kb_id = kb_match.group(1) if kb_match else ""
+                        
+                        updates.append({
+                            "title": title[:500],
+                            "kb_id": kb_id,
+                            "installed_at": str(item.Date),
+                            "description": str(item.Description)[:1000] if hasattr(item, 'Description') else "",
+                            "support_url": str(item.SupportUrl)[:500] if hasattr(item, 'SupportUrl') else ""
+                        })
+                    return updates
+            except Exception as com_error:
+                agent_log.warning(f"COM method for Windows Updates failed: {com_error}. Trying PowerShell fallback...")
 
-                updates.append({
-                    "title": title[:500],
-                    "kb_id": kb_id,
-                    "installed_at": installed_at,
-                    "description": str(item.Description)[:1000] if hasattr(item, 'Description') else "",
-                    "support_url": str(item.SupportUrl)[:500] if hasattr(item, 'SupportUrl') else ""
-                })
+            # Fallback: Use PowerShell Get-HotFix
+            import subprocess
+            cmd = ["powershell", "-Command", "Get-HotFix | Select-Object HotFixID,Description,InstalledOn | ConvertTo-Json"]
+            
+            # Create startupinfo to hide window
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                hotfixes = json.loads(result.stdout)
+                # If single result, ConvertTo-Json returns dict, not list
+                if isinstance(hotfixes, dict):
+                    hotfixes = [hotfixes]
+                    
+                for hf in hotfixes:
+                    # Parse date from /Date(1704931200000)/ format or string
+                    installed_on = hf.get('InstalledOn', '')
+                    
+                    updates.append({
+                        "title": f"{hf.get('Description', 'Update')} ({hf.get('HotFixID', '')})",
+                        "kb_id": hf.get('HotFixID', ''),
+                        "installed_at": str(installed_on),
+                        "description": hf.get('Description', ''),
+                        "support_url": ""
+                    })
+                    
         except Exception as e:
             agent_log.error(f"Failed to collect Windows Updates: {e}")
             
