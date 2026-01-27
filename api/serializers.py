@@ -58,7 +58,7 @@ class DeviceSerializer(serializers.ModelSerializer):
             'is_online', 'group', 'group_name', 'registered_at',
             'last_seen', 'last_ip', 'notes', 'current_user',
             'last_boot_time', 'uptime', 'inventory_refresh_status',
-            'latest_refresh_time'
+            'latest_refresh_time', 'ip_mismatch'
         ]
         read_only_fields = ['id', 'registered_at', 'last_seen', 'last_ip', 'latest_refresh_time']
         # Ensure hostname uniqueness doesn't block updates of the same record
@@ -87,36 +87,69 @@ class DeviceRegistrationSerializer(serializers.Serializer):
     ip_address = serializers.IPAddressField()
     os_version = serializers.CharField(max_length=255)
     device_id = serializers.UUIDField(required=False, allow_null=True)
+    device_public_key = serializers.CharField(required=False, allow_blank=True) # PEM format
+    registration_signature = serializers.CharField(required=False, allow_blank=True) # Base64 signature
     
     def create(self, validated_data):
         """Create or update device and generate JWT token"""
         from rest_framework_simplejwt.tokens import RefreshToken
         from core.models import RSAKeyPair
+        from core.crypto import encrypt_with_public_key, verify_signature
+        import json
         
         hostname = validated_data.pop('hostname')
         device_id = validated_data.pop('device_id', None)
+        device_pub_key = validated_data.pop('device_public_key', None)
+        reg_sig = validated_data.pop('registration_signature', None)
         
         # Security: Check if hostname is already registered
         existing_device = Device.objects.filter(hostname=hostname).first()
         
         if existing_device:
-            # If device is blocked/inactive, don't allow re-registration
+            # 1. Blocked check
             if existing_device.status == 'blocked':
                 raise serializers.ValidationError("This device has been blocked and cannot register.")
             
-            # If ID is provided, it must match
+            # 2. SECURITY FIX: Re-Registration Challenge
+            # If the device was previously registered with a public key, we MUST verify identity
+            if existing_device.registration_public_key:
+                if not reg_sig:
+                    raise serializers.ValidationError("Identity verification required: registration_signature missing.")
+                
+                # Verify that the agent owns the private key for the stored public key
+                # We verify against the hostname + device_id string
+                verify_payload = f"{hostname}:{existing_device.id}"
+                if not verify_signature(verify_payload, reg_sig, existing_device.registration_public_key):
+                    # Potential impersonation attempt
+                    from core.models import AuditLog
+                    AuditLog.objects.create(
+                        device=existing_device,
+                        ip_address=self.context.get('request').META.get('REMOTE_ADDR', '0.0.0.0'),
+                        action='failed_auth',
+                        severity='critical',
+                        description=f"CRITICAL: Re-registration identity mismatch for {hostname}. Potential impersonation attempt."
+                    )
+                    raise serializers.ValidationError("Identity verification failed. Secure re-registration mismatch.")
+
+            # 3. ID Mismatch Check (if provided)
             if device_id and str(existing_device.id) != str(device_id):
                 raise serializers.ValidationError("Device ID mismatch for this hostname.")
             
-            # Update existing
+            # Update existing attributes
             for attr, value in validated_data.items():
                 setattr(existing_device, attr, value)
+            
+            # Update public key if provided (useful for key rotation)
+            if device_pub_key:
+                existing_device.registration_public_key = device_pub_key
+                
             existing_device.save()
             device = existing_device
         else:
-            # New device
+            # New device - Initial trust of the provided public key
             device = Device.objects.create(
                 hostname=hostname,
+                registration_public_key=device_pub_key,
                 **validated_data
             )
         
@@ -126,10 +159,27 @@ class DeviceRegistrationSerializer(serializers.Serializer):
         refresh['user_id'] = str(device.id)
         
         access_token = str(refresh.access_token)
+        refresh_token_str = str(refresh)
         
         # Store encrypted refresh token for persistence
-        device.auth_token = str(refresh)
+        device.auth_token = refresh_token_str
         device.save()
+        
+        # Security Fix: If agent provided a public key, encrypt the refresh token
+        is_encrypted = False
+        final_refresh = refresh_token_str
+        
+        # Use provided key for this response, even if it's the same as stored
+        effective_pub_key = device_pub_key or device.registration_public_key
+        
+        if device_pub_key:
+            try:
+                final_refresh = encrypt_with_public_key(refresh_token_str, device_pub_key)
+                is_encrypted = True
+            except Exception as e:
+                # Fallback to plain if encryption fails (for debugging/legacy)
+                print(f"DEBUG: Encryption Exception: {e}")
+                pass
         
         # Get public key for signature verification
         keypair = RSAKeyPair.get_keypair()
@@ -137,7 +187,8 @@ class DeviceRegistrationSerializer(serializers.Serializer):
         return {
             'device': device,
             'token': access_token,
-            'refresh': str(refresh),
+            'refresh': final_refresh,
+            'is_encrypted': is_encrypted,
             'public_key': keypair.public_key
         }
 
@@ -255,24 +306,63 @@ class UpdateUploadSerializer(serializers.Serializer):
     signature = serializers.CharField(required=False, allow_blank=True)
     
     def validate_file(self, value):
-        """Validate file extension and size"""
+        """Validate file extension, size, and actual MIME type content"""
         from django.conf import settings
         import os
+        import magic
         
-        # Check extension
+        # 1. Check extension
         ext = os.path.splitext(value.name)[1].lower()
         if ext not in settings.ALLOWED_UPDATE_EXTENSIONS:
             raise serializers.ValidationError(
                 f"Invalid file type. Allowed: {', '.join(settings.ALLOWED_UPDATE_EXTENSIONS)}"
             )
         
-        # Check size
+        # 2. Check size
         max_size = settings.MAX_UPLOAD_SIZE
         if value.size > max_size:
             max_mb = max_size / (1024 * 1024)
             raise serializers.ValidationError(
                 f"File too large. Maximum size: {max_mb}MB"
             )
+        
+        # 3. SECURITY FIX: Validate actual content using magic bytes
+        try:
+            # Read first 2048 bytes for MIME detection
+            content_sample = value.read(2048)
+            value.seek(0) # Reset pointer for later use
+            
+            mime_type = magic.from_buffer(content_sample, mime=True)
+            
+            # Common allowed executable MIME types
+            # application/x-msi: MSI
+            # application/x-dosexec: EXE/DLL
+            # application/x-ms-dos-executable: Alternative EXE
+            # application/zip: ZIP
+            allowed_mimes = [
+                'application/x-msi', 
+                'application/x-dosexec', 
+                'application/x-ms-dos-executable',
+                'application/vnd.microsoft.portable-executable',
+                'application/zip',
+                'application/x-zip-compressed'
+            ]
+            
+            if mime_type not in allowed_mimes:
+                # Special case: check if it's a known plain text file renamed
+                if mime_type.startswith('text/') or 'script' in mime_type:
+                    raise serializers.ValidationError(f"Security violation: Content mismatch. File appears to be a script/text ({mime_type}), not an executable.")
+                
+                # Allow it if it's not strictly known but not clearly malicious (for some edge cases)
+                # but better to be strict
+                raise serializers.ValidationError(f"Invalid file content. Expected executable, got {mime_type}")
+                
+        except serializers.ValidationError:
+            raise
+        except Exception as e:
+            # Fallback for magic library issues
+            import logging
+            logging.getLogger('django.security').warning(f"MIME validation failed to execute: {e}")
         
         return value
     

@@ -29,6 +29,7 @@ a = Analysis(
         'collector',
         'config',
         'updater',
+        'magic',
     ],
     hookspath=[],
     hooksconfig={},

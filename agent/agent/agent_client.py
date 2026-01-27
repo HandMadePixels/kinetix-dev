@@ -14,6 +14,77 @@ class AgentClient:
         self.session = requests.Session()
         self.session.verify = True # Enforce SSL verification
 
+    def _ensure_device_keypair(self):
+        """Ensure device has its own RSA keypair for secure token exchange"""
+        if not self.config.get_device_private_key():
+            agent_log.info("Generating new device keypair for secure handshake...")
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.backends import default_backend
+
+            private_key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=4096, # Restored to 4096 for maximum security
+                backend=default_backend()
+            )
+            private_pem = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            ).decode('utf-8')
+            
+            public_key = private_key.public_key()
+            public_pem = public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            ).decode('utf-8')
+            
+            self.config.set_device_private_key(private_pem)
+            self.config.set_device_public_key(public_pem)
+            return private_pem, public_pem
+        
+        return self.config.get_device_private_key(), self.config.get_device_public_key()
+
+    def _decrypt_token(self, combined_ciphertext):
+        """Decrypt token using hybrid RSA + Fernet approach"""
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.fernet import Fernet
+        import base64
+
+        if ":" not in combined_ciphertext:
+            raise ValueError("Invalid secure token format")
+
+        enc_key_b64, enc_data_b64 = combined_ciphertext.split(":", 1)
+        encrypted_key = base64.b64decode(enc_key_b64)
+        ciphertext_data = base64.b64decode(enc_data_b64)
+
+        private_key_pem = self.config.get_device_private_key()
+        if not private_key_pem:
+            raise ValueError("No device private key available for decryption")
+
+        # 1. Decrypt the Fernet Key using RSA
+        private_key = serialization.load_pem_private_key(
+            private_key_pem.encode('utf-8'),
+            password=None,
+            backend=default_backend()
+        )
+        
+        sym_key = private_key.decrypt(
+            encrypted_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        
+        # 2. Decrypt the actual data using Fernet
+        f = Fernet(sym_key)
+        plaintext = f.decrypt(ciphertext_data)
+        return plaintext.decode('utf-8')
+
     def _get_headers(self, authenticated=True):
         headers = {
             'Content-Type': 'application/json',
@@ -95,14 +166,52 @@ class AgentClient:
     def register(self, hostname, ip_address, os_version):
         """Register agent with the Kinetix"""
         url = f"register/"
+        
+        # Ensure device has its own keypair first
+        private_key_pem, public_key_pem = self._ensure_device_keypair()
+
         payload = {
             "hostname": hostname,
             "ip_address": ip_address,
             "os_version": os_version,
             "agent_version": "1.0.0",
-            "device_id": self.config.agent_id or None
+            "device_id": self.config.agent_id or None,
+            "device_public_key": public_key_pem
         }
         
+        # SECURITY FIX: Re-Registration Challenge
+        # If we already have a device_id, we must sign the registration request
+        # to prove we own the private key for the previously registered public key.
+        if self.config.agent_id:
+            try:
+                from cryptography.hazmat.primitives import hashes, serialization
+                from cryptography.hazmat.primitives.asymmetric import padding
+                from cryptography.hazmat.backends import default_backend
+                import base64
+
+                # We sign the "hostname:device_id" string
+                sign_payload = f"{hostname}:{self.config.agent_id}".encode('utf-8')
+                
+                private_key = serialization.load_pem_private_key(
+                    private_key_pem.encode('utf-8'),
+                    password=None,
+                    backend=default_backend()
+                )
+                
+                signature = private_key.sign(
+                    sign_payload,
+                    padding.PSS(
+                        mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.DIGEST_LENGTH
+                    ),
+                    hashes.SHA256()
+                )
+                
+                payload["registration_signature"] = base64.b64encode(signature).decode('utf-8')
+                agent_log.info("Identity signature included for re-registration.")
+            except Exception as e:
+                agent_log.error(f"Failed to sign registration payload: {e}")
+
         try:
             # authenticated=False for registration
             response = self._make_request('POST', url, json=payload, authenticated=False, timeout=30)
@@ -112,12 +221,24 @@ class AgentClient:
                 self.config.agent_id = data.get('device_id')
                 self.config.set_token(data.get('token'))
                 
-                # Save refresh token
-                refresh_token = data.get('refresh')
-                if refresh_token:
+                # Retrieve and handle refresh token
+                refresh_token_raw = data.get('refresh')
+                is_encrypted = data.get('is_encrypted', False)
+                
+                if refresh_token_raw:
+                    if is_encrypted:
+                        try:
+                            refresh_token = self._decrypt_token(refresh_token_raw)
+                            agent_log.info("Successfully decrypted secure refresh token.")
+                        except Exception as e:
+                            agent_log.error(f"Failed to decrypt refresh token: {e}")
+                            refresh_token = refresh_token_raw
+                    else:
+                        refresh_token = refresh_token_raw
+                    
                     self.config.set_refresh_token(refresh_token)
                 
-                # Save public key if provided
+                # Save public key if provided (server's public key for update verification)
                 public_key = data.get('public_key')
                 if public_key:
                     try:

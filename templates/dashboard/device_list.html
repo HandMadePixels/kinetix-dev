@@ -68,7 +68,12 @@
                                 Offline</span>
                             {% endif %}
                         </td>
-                        <td><code>{{ device.ip_address }}</code></td>
+                        <td>
+                            <code>{{ device.ip_address }}</code>
+                            {% if device.ip_mismatch %}
+                            <i class="bi bi-exclamation-triangle-fill text-warning" title="Reported IP ({{ device.last_ip }}) differs from connection IP"></i>
+                            {% endif %}
+                        </td>
                         <td>{{ device.os_version }}</td>
                         <td class="last-seen-cell">{{ device.last_seen|timesince }} ago</td>
                         <td class="inventory-status-cell">

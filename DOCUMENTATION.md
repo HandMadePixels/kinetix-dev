@@ -134,4 +134,4 @@ This script handles dependency checks, port clearing, database migrations, and s
 
 ---
 
-**🏷️ Version 1.4.0** | *Persistent Auth & Centralized Management*
+**🏷️ Version 1.5.0** | *Persistent Auth & Centralized Management*

@@ -44,6 +44,9 @@ class Device(models.Model):
     # Additional info
     notes = models.TextField(blank=True)
     refresh_inventory_requested = models.BooleanField(default=False)
+    ip_mismatch = models.BooleanField(default=False, help_text="True if reported IP differs from connection IP")
+    registration_public_key = models.TextField(blank=True, null=True, help_text="The agent's unique public key for re-registration challenges")
+    last_heartbeat_audit = models.DateTimeField(null=True, blank=True, help_text="Timestamp of the last time this device's heartbeat was audited")
     
     INVENTORY_STATUS_CHOICES = [
         ('idle', 'Idle'),
@@ -94,7 +97,7 @@ class Device(models.Model):
         return timezone.now() - self.last_seen < timeout
     
     def update_heartbeat(self, ip_address=None, update_primary=True):
-        """Update last seen timestamp and sync IP address"""
+        """Update last seen timestamp and sync IP address with throttled auditing"""
         self.last_seen = timezone.now()
         if ip_address:
             self.last_ip = ip_address
@@ -102,7 +105,21 @@ class Device(models.Model):
             # or if we don't have one yet
             if (update_primary or not self.ip_address) and self.ip_address != ip_address:
                 self.ip_address = ip_address
-        self.save(update_fields=['last_seen', 'last_ip', 'ip_address'])
+        
+        # SECURITY FIX: Heartbeat Auditing (Throttled to once per hour)
+        audit_threshold = timezone.now() - timezone.timedelta(hours=1)
+        if not self.last_heartbeat_audit or self.last_heartbeat_audit < audit_threshold:
+            AuditLog.objects.create(
+                device=self,
+                ip_address=ip_address or self.ip_address or '0.0.0.0',
+                action='device_update',
+                severity='info',
+                description=f"Heartbeat received for {self.hostname}",
+                metadata={'type': 'heartbeat', 'connection_ip': ip_address}
+            )
+            self.last_heartbeat_audit = timezone.now()
+            
+        self.save(update_fields=['last_seen', 'last_ip', 'ip_address', 'last_heartbeat_audit'])
 
     def get_latest_refresh_time(self):
         """Get the timestamp of the latest inventory snapshot"""
@@ -201,7 +218,7 @@ class SystemConfig(models.Model):
     # Policies
     update_retention_days = models.IntegerField(default=90)
     audit_log_retention_days = models.IntegerField(default=365)
-    device_heartbeat_timeout = models.IntegerField(default=300)  # seconds
+    device_heartbeat_timeout = models.IntegerField(default=10)  # seconds (Reduced from 300 for immediacy)
     
     # Rate limiting
     api_rate_limit_per_minute = models.IntegerField(default=100)
@@ -282,9 +299,18 @@ class RSAKeyPair(models.Model):
             raise ValueError("RSA keypair already exists")
         super().save(*args, **kwargs)
 
+from django.core.validators import RegexValidator
+
 class RemoteCommand(models.Model):
     """Generic remote execution commands for agents"""
     
+    # Validator to prevent command injection characters
+    PAYLOAD_VALIDATOR = RegexValidator(
+        regex=r'^[^;&|`\$<>]+$',
+        message="Payload contains forbidden characters (; & | ` $ < >) to prevent command injection.",
+        code='invalid_payload'
+    )
+
     COMMAND_CHOICES = [
         ('uninstall', 'Uninstall Software'),
         ('shell', 'Execute Shell Command'),
@@ -306,14 +332,14 @@ class RemoteCommand(models.Model):
     command_type = models.CharField(max_length=50, choices=COMMAND_CHOICES)
     
     # Payload (e.g., the uninstall string or script)
-    payload = models.TextField()
+    payload = models.TextField(validators=[PAYLOAD_VALIDATOR])
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     result_message = models.TextField(blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     executed_at = models.DateTimeField(null=True, blank=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     
     class Meta:
         ordering = ['-created_at']

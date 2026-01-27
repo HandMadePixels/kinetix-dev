@@ -59,6 +59,7 @@ class DeviceRegistrationView(generics.CreateAPIView):
             'hostname': result['device'].hostname,
             'token': result['token'],
             'refresh': result['refresh'],
+            'is_encrypted': result.get('is_encrypted', False),
             'public_key': result['public_key']
         }, status=status.HTTP_201_CREATED)
     
@@ -90,8 +91,8 @@ class DeviceViewSet(viewsets.ModelViewSet):
     def heartbeat(self, request, pk=None):
         """Update device heartbeat"""
         device = self.get_object()
-        ip_address = self.get_client_ip()
-        device.update_heartbeat(ip_address)
+        ip_address = self.get_client_ip() # This is the connection IP
+        device.update_heartbeat(ip_address, update_primary=True)
         
         return Response({
             'status': 'ok',
@@ -341,13 +342,15 @@ class InventorySubmissionView(generics.CreateAPIView):
     parser_classes = [JSONParser]
     
     def create(self, request, *args, **kwargs):
+        # SECURITY FIX: Ensure we use the authenticated device
+        device = request.user
+        if not isinstance(device, Device):
+            return Response({'error': 'Device authentication required'}, status=status.HTTP_403_FORBIDDEN)
+
         # Pass the authenticated device to the serializer context
-        serializer = self.get_serializer(data=request.data, context={'request': request, 'device': request.user})
+        serializer = self.get_serializer(data=request.data, context={'request': request, 'device': device})
         serializer.is_valid(raise_exception=True)
         snapshot = serializer.save()
-        
-        # Update device heartbeat
-        device = snapshot.device
         
         reported_ip = serializer.validated_data.get('ip_address')
         os_version = serializer.validated_data.get('os_version')
@@ -377,19 +380,43 @@ class InventorySubmissionView(generics.CreateAPIView):
         device.inventory_refresh_status = 'idle'
         update_fields.append('inventory_refresh_status')
 
-        if update_fields:
-            device.save(update_fields=update_fields)
+        # SECURITY FIX: Prioritize connection IP (REMOTE_ADDR) and detect spoofing
+        import ipaddress
+        def is_private(ip):
+            try:
+                return ipaddress.ip_address(ip).is_private
+            except:
+                return False
 
         if reported_ip:
-            # Trust reported IP for primary address (likely local/VPN IP)
-            device.update_heartbeat(reported_ip, update_primary=True)
-            # Store connection IP as last_ip if different (for debugging/audit)
-            if connection_ip != reported_ip:
-                device.last_ip = connection_ip
-                device.save(update_fields=['last_ip'])
-        else:
-            # Fallback to connection IP
+            # Smart mismatch detection:
+            # 1. If they match exactly, it's fine.
+            # 2. If connection is local, ignore mismatch.
+            # 3. If reported is private (NAT) and connection is public, it's standard behavior (don't flag).
+            # 4. If reported is PUBLIC and doesn't match connection, flag it (suspicious).
+            
+            is_mismatch = False
+            if reported_ip != connection_ip and connection_ip != '127.0.0.1':
+                # Flag if agent claims to be a Public IP that it isn't
+                if not is_private(reported_ip):
+                    is_mismatch = True
+            
+            device.ip_mismatch = is_mismatch
+            update_fields.append('ip_mismatch')
+            
+            # We keep the reported IP as informative (last_ip), but primary is connection IP
+            device.last_ip = reported_ip 
+            update_fields.append('last_ip')
+            
             device.update_heartbeat(connection_ip, update_primary=True)
+        else:
+            device.ip_mismatch = False
+            update_fields.append('ip_mismatch')
+            device.update_heartbeat(connection_ip, update_primary=True)
+
+        if update_fields:
+            # heartbeat calls save(), but we might have other fields
+            device.save(update_fields=update_fields)
         
         # Log submission
         AuditLog.objects.create(
@@ -728,7 +755,7 @@ class RemoteCommandActionView(generics.GenericAPIView):
     def post(self, request):
         device_id = request.data.get('device_id')
         cmd_type = request.data.get('command_type')
-        payload = request.data.get('payload')
+        payload = request.data.get('payload', '')
 
         # Check specific permissions based on command type
         perm_map = {
@@ -748,14 +775,25 @@ class RemoteCommandActionView(generics.GenericAPIView):
         if not request.user.has_perm(required_perm):
             return Response({'error': f'Permission denied: {required_perm} required'}, status=status.HTTP_403_FORBIDDEN)
 
+        # SECURITY: Validate payload against injection characters
+        import re
+        forbidden = r'[;&|`$<>]'
+        # Let's use the model's validator logic but here for early return.
+        if cmd_type == 'shell' or cmd_type == 'uninstall':
+            if re.search(forbidden, payload):
+                return Response({'error': 'Command injection characters detected in payload.'}, status=status.HTTP_400_BAD_REQUEST)
+
         device = get_object_or_404(Device, id=device_id)
         
-        rcmd = RemoteCommand.objects.create(
-            device=device,
-            command_type=cmd_type,
-            payload=payload,
-            created_by=request.user
-        )
+        try:
+            rcmd = RemoteCommand.objects.create(
+                device=device,
+                command_type=cmd_type,
+                payload=payload,
+                created_by=request.user
+            )
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         AuditLog.objects.create(
             user=request.user,

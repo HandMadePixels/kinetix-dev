@@ -134,12 +134,17 @@ def compute_file_hash(file_path, algorithm='sha256'):
     
     Args:
         file_path: Path to file
-        algorithm: Hash algorithm (sha256, sha512, md5)
+        algorithm: Hash algorithm (sha256, sha512)
     
     Returns:
         str: Hexadecimal hash digest
     """
-    hash_func = getattr(hashlib, algorithm)()
+    # SECURITY FIX: Restrict to secure algorithms
+    allowed_algorithms = {'sha256', 'sha512'}
+    if algorithm.lower() not in allowed_algorithms:
+        raise ValueError(f"Insecure or unsupported hash algorithm: {algorithm}. Use sha256 or sha512.")
+
+    hash_func = getattr(hashlib, algorithm.lower())()
     
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found for hashing: {file_path}")
@@ -158,15 +163,20 @@ def compute_data_hash(data, algorithm='sha256'):
     
     Args:
         data: bytes or str to hash
-        algorithm: Hash algorithm (sha256, sha512, md5)
+        algorithm: Hash algorithm (sha256, sha512)
     
     Returns:
         str: Hexadecimal hash digest
     """
+    # SECURITY FIX: Restrict to secure algorithms
+    allowed_algorithms = {'sha256', 'sha512'}
+    if algorithm.lower() not in allowed_algorithms:
+        raise ValueError(f"Insecure or unsupported hash algorithm: {algorithm}. Use sha256 or sha512.")
+
     if isinstance(data, str):
         data = data.encode('utf-8')
     
-    hash_func = getattr(hashlib, algorithm)()
+    hash_func = getattr(hashlib, algorithm.lower())()
     hash_func.update(data)
     
     return hash_func.hexdigest()
@@ -190,6 +200,89 @@ def sign_file(file_path, private_key_pem):
     signature = sign_data(file_hash, private_key_pem)
     
     return file_hash, signature
+
+
+from cryptography.fernet import Fernet
+
+def encrypt_with_public_key(data, public_key_pem):
+    """
+    Encrypt data using a hybrid RSA + Fernet approach.
+    1. Generate a random symmetric key (Fernet).
+    2. Encrypt the data with Fernet.
+    3. Encrypt the Fernet key with the RSA public key.
+    4. Return (Encrypted Key |:| Encrypted Data) as Base64.
+    """
+    import base64
+    try:
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        
+        # 1. Symmetric Encryption (Fast, no size limit)
+        sym_key = Fernet.generate_key()
+        f = Fernet(sym_key)
+        ciphertext_data = f.encrypt(data)
+        
+        # 2. Asymmetric Encryption of the Key
+        key_data = public_key_pem.strip().encode('utf-8')
+        public_key = serialization.load_pem_public_key(
+            key_data,
+            backend=default_backend()
+        )
+        
+        encrypted_key = public_key.encrypt(
+            sym_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        
+        # 3. Combine both (Base64 encoded)
+        combined = base64.b64encode(encrypted_key).decode('utf-8') + ":" + base64.b64encode(ciphertext_data).decode('utf-8')
+        return combined
+        
+    except Exception as e:
+        raise Exception(f"RSA Hybrid Encryption failed: {str(e)}")
+
+
+def decrypt_with_private_key(combined_ciphertext, private_key_pem):
+    """
+    Decrypt data using the hybrid RSA + Fernet approach.
+    """
+    import base64
+    try:
+        if ":" not in combined_ciphertext:
+            raise ValueError("Invalid combined ciphertext format")
+            
+        enc_key_b64, enc_data_b64 = combined_ciphertext.split(":", 1)
+        encrypted_key = base64.b64decode(enc_key_b64)
+        ciphertext_data = base64.b64decode(enc_data_b64)
+        
+        # 1. Decrypt the Symmetric Key
+        key_data = private_key_pem.strip().encode('utf-8')
+        private_key = serialization.load_pem_private_key(
+            key_data,
+            password=None,
+            backend=default_backend()
+        )
+        
+        sym_key = private_key.decrypt(
+            encrypted_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        
+        # 2. Decrypt the Data
+        f = Fernet(sym_key)
+        plaintext = f.decrypt(ciphertext_data)
+        return plaintext.decode('utf-8')
+        
+    except Exception as e:
+        raise Exception(f"RSA Hybrid Decryption failed: {str(e)}")
 
 
 def verify_file_signature(file_path, expected_hash, signature_b64, public_key_pem):

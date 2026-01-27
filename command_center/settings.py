@@ -158,10 +158,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '1000/minute',
-        'user': '10000/minute',
-        'register': '1000/hour',  # Increased for testing
-        'upload': '1000/hour',   # Increased for testing
+        'anon': '100/minute',
+        'user': '1000/minute',
+        'register': '20/hour',
+        'upload': '10/hour',
     },
     'EXCEPTION_HANDLER': 'core.exceptions.custom_exception_handler',
 }

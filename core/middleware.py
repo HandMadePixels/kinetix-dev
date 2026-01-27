@@ -31,6 +31,32 @@ class AuditLoggingMiddleware:
         
         return response
     
+    def scrub_sensitive_data(self, data):
+        """Recursively redact sensitive keys from a dictionary or list"""
+        if not isinstance(data, (dict, list)):
+            return data
+        
+        sensitive_keys = {
+            'token', 'refresh', 'password', 'key', 'secret', 
+            'signature', 'auth_token', 'private_key', 'payload'
+        }
+        
+        if isinstance(data, list):
+            return [self.scrub_sensitive_data(item) for item in data]
+        
+        scrubbed = {}
+        for k, v in data.items():
+            # Check if key contains any sensitive substrings (case-insensitive)
+            is_sensitive = any(sk in k.lower() for sk in sensitive_keys)
+            
+            if is_sensitive:
+                scrubbed[k] = "********"
+            elif isinstance(v, (dict, list)):
+                scrubbed[k] = self.scrub_sensitive_data(v)
+            else:
+                scrubbed[k] = v
+        return scrubbed
+
     def log_request(self, request, response):
         """Log request details to audit log"""
         
@@ -70,6 +96,15 @@ class AuditLoggingMiddleware:
         
         # Log to database (async to avoid performance impact)
         if action:
+            # SECURITY FIX: Sanitize query parameters and metadata
+            query_params = self.scrub_sensitive_data(dict(request.GET))
+            metadata = {
+                'method': request.method,
+                'path': request.path,
+                'status_code': response.status_code,
+                'query_params': query_params,
+            }
+
             try:
                 AuditLog.objects.create(
                     user=user_obj,
@@ -79,12 +114,7 @@ class AuditLoggingMiddleware:
                     action=action,
                     severity=severity,
                     description=f"{request.method} {request.path}",
-                    metadata={
-                        'method': request.method,
-                        'path': request.path,
-                        'status_code': response.status_code,
-                        'query_params': dict(request.GET),
-                    }
+                    metadata=metadata
                 )
             except Exception as e:
                 security_logger.error(f"Failed to create audit log: {e}")
@@ -144,7 +174,7 @@ class RateLimitMiddleware:
         return response
     
     def check_rate_limit(self, request):
-        """Check if request is within rate limits"""
+        """Check if request is within rate limits with per-device awareness"""
         
         ip_address = self.get_client_ip(request)
         
@@ -153,26 +183,41 @@ class RateLimitMiddleware:
             return True
             
         # Skip for authenticated staff users
-        if request.user.is_authenticated and request.user.is_staff:
+        if request.user.is_authenticated and getattr(request.user, 'is_staff', False):
             return True
         
         path = request.path
         
+        # Determine the identity for the cache key
+        identity = ip_address
+        if request.user.is_authenticated:
+            from core.models import Device
+            if isinstance(request.user, Device):
+                # SECURITY FIX: Use Device ID for granular limiting behind NAT
+                identity = f"device:{request.user.id}"
+            else:
+                identity = f"user:{request.user.id}"
+
         # Different limits for different endpoints
         if '/api/v1/register' in path:
-            limit = 1000
-            window = 3600  # 1000 per hour
+            limit = 20
+            window = 3600  # 20 per hour
         elif '/api/v1/updates' in path and request.method == 'POST':
-            limit = 100
-            window = 3600  # 100 per hour
-        elif path.startswith('/api/'):
+            limit = 10
+            window = 3600  # 10 per hour
+        elif '/api/v1/commands' in path or '/api/v1/heartbeat' in path:
+            # SECURITY: Relaxed limit for control plane to allow "Immediate" reflection
+            # 1000 per minute allows up to 16 requests per second per device.
             limit = 1000
-            window = 60  # 1000 per minute
+            window = 60
+        elif path.startswith('/api/'):
+            limit = 300
+            window = 60  # 300 per minute (5 per second avg)
         else:
             return True  # No limit for non-API endpoints
         
         # Check cache
-        cache_key = f"ratelimit:{ip_address}:{path}"
+        cache_key = f"ratelimit:{identity}:{path}"
         current_count = cache.get(cache_key)
         
         if current_count is None:

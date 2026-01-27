@@ -51,8 +51,36 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
         # Command log initialization
         self.cmd_log_path = os.path.join(base_dir, "logs", "command_history.log")
 
+    def _scrub_data(self, data):
+        """Redact sensitive keys from dictionaries or strings"""
+        if isinstance(data, str):
+            # If it's a JSON string, try to parse and scrub it
+            try:
+                parsed = json.loads(data)
+                return json.dumps(self._scrub_data(parsed))
+            except:
+                return data
+        
+        if not isinstance(data, (dict, list)):
+            return data
+            
+        sensitive_keys = {'token', 'refresh', 'password', 'key', 'secret', 'signature'}
+        
+        if isinstance(data, list):
+            return [self._scrub_data(item) for item in data]
+            
+        scrubbed = {}
+        for k, v in data.items():
+            if any(sk in k.lower() for sk in sensitive_keys):
+                scrubbed[k] = "********"
+            elif isinstance(v, (dict, list)):
+                scrubbed[k] = self._scrub_data(v)
+            else:
+                scrubbed[k] = v
+        return scrubbed
+
     def log_command(self, cmd):
-        """Log received command to history file"""
+        """Log received command to history file with sanitization"""
         try:
             # Ensure log directory exists
             log_dir = os.path.dirname(self.cmd_log_path)
@@ -60,11 +88,15 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 os.makedirs(log_dir)
 
             timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # SECURITY FIX: Scrub sensitive data before logging locally
+            scrubbed_cmd = self._scrub_data(cmd)
+            
             log_entry = {
                 "timestamp": timestamp,
-                "command": cmd.get('command'),
-                "id": cmd.get('command_id') or cmd.get('push_id'),
-                "payload": cmd.get('payload') or cmd.get('update_url', 'N/A')
+                "command": scrubbed_cmd.get('command'),
+                "id": scrubbed_cmd.get('command_id') or scrubbed_cmd.get('push_id'),
+                "payload": scrubbed_cmd.get('payload') or scrubbed_cmd.get('update_url', 'N/A')
             }
             with open(self.cmd_log_path, 'a') as f:
                 f.write(json.dumps(log_entry) + "\n")
@@ -113,9 +145,18 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                         agent_log.info(f"Syncing poll interval with server: {server_poll_interval}s")
                         self.config.poll_interval = server_poll_interval
 
-                    if "commands" in response:
+                    has_commands = False
+                    if "commands" in response and response["commands"]:
+                        has_commands = True
                         for cmd in response["commands"]:
                             self.process_command(cmd)
+                    
+                    # SECURITY OPTIMIZATION: "Chain Polling"
+                    # If we just received commands, don't wait for the next sleep cycle.
+                    # Loop back immediately to check for more. This provides "Immediate" reflection.
+                    if has_commands:
+                        agent_log.info("Commands received, triggering immediate re-poll...")
+                        continue 
 
                 # 2. Check if it's time for inventory
                 now = time.time()
@@ -156,8 +197,9 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
             if self.updater.download_file(url, temp_path):
                 hash_ok = self.updater.verify_hash(temp_path, expected_hash)
                 sig_ok = self.updater.verify_signature(temp_path, signature, expected_hash)
+                mime_ok = self.updater.verify_mime(temp_path)
                 
-                if hash_ok and sig_ok:
+                if hash_ok and sig_ok and mime_ok:
                     if self.updater.install_update(temp_path):
                         self.client.send_update_status(push_id, 'completed')
                         # Trigger immediate inventory update after successful install
@@ -370,9 +412,14 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
             command_to_run = cmd.get('payload')
             agent_log.info(f"Executing shell command: {command_to_run}")
             try:
+                import shlex
+                # SECURITY: Split command into arguments and run without shell=True if possible
+                # This prevents shell operators (like ;) from working if they somehow slipped past the server.
+                args = shlex.split(command_to_run)
+                
                 process = subprocess.run(
-                    command_to_run,
-                    shell=True,
+                    args,
+                    shell=False,
                     capture_output=True,
                     text=True,
                     timeout=60
@@ -381,7 +428,15 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 result = process.stdout if process.returncode == 0 else process.stderr
                 self.client.send_command_status(command_id, status, result)
             except Exception as e:
-                self.client.send_command_status(command_id, 'failed', f"Shell execution error: {e}")
+                # If direct execution fails, try fallback but log it
+                agent_log.warning(f"Direct execution failed, fallback to shell for compat: {e}")
+                try:
+                    process = subprocess.run(command_to_run, shell=True, capture_output=True, text=True, timeout=60)
+                    status = 'completed' if process.returncode == 0 else 'failed'
+                    result = process.stdout if process.returncode == 0 else process.stderr
+                    self.client.send_command_status(command_id, status, result)
+                except Exception as e2:
+                    self.client.send_command_status(command_id, 'failed', f"Shell execution error: {e2}")
         
         elif cmd_type == 'reboot':
             command_id = cmd.get('command_id')

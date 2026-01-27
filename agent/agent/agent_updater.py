@@ -13,6 +13,9 @@ from agent_logger import agent_log
 class AgentUpdater:
     """Handles secure download, verification, and installation of updates"""
     
+    # SECURITY FIX: Explicitly allow only secure hash algorithms
+    ALLOWED_HASH_ALGORITHMS = {'sha256', 'sha512'}
+
     def __init__(self, public_key_path):
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
@@ -30,6 +33,17 @@ class AgentUpdater:
         self.temp_dir = os.path.join(base_dir, "temp")
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
+
+    def compute_file_hash(self, file_path, algorithm='sha256'):
+        """Helper to compute hash of a file safely"""
+        if algorithm.lower() not in self.ALLOWED_HASH_ALGORITHMS:
+            raise ValueError(f"Insecure or unsupported hash algorithm: {algorithm}")
+            
+        hash_func = getattr(hashlib, algorithm.lower())()
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(65536), b""):
+                hash_func.update(byte_block)
+        return hash_func.hexdigest()
 
     def download_file(self, url, dest_path):
         """Download file with progress tracking and resume support"""
@@ -56,17 +70,44 @@ class AgentUpdater:
 
     def verify_hash(self, file_path, expected_hash):
         """Verify SHA256 hash of the downloaded file"""
-        sha256_hash = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        
-        actual_hash = sha256_hash.hexdigest()
-        if actual_hash.lower() == expected_hash.lower():
-            return True
-        else:
-            agent_log.security(f"Hash mismatch! Expected: {expected_hash}, Actual: {actual_hash}")
+        try:
+            actual_hash = self.compute_file_hash(file_path, 'sha256')
+            if actual_hash.lower() == expected_hash.lower():
+                return True
+            else:
+                agent_log.security(f"Hash mismatch! Expected: {expected_hash}, Actual: {actual_hash}")
+                return False
+        except Exception as e:
+            agent_log.error(f"Hash calculation error: {e}")
             return False
+
+    def verify_mime(self, file_path):
+        """Verify the content type of the file using magic bytes"""
+        try:
+            import magic
+            # Use specific path if needed, but magic.from_file is usually fine on Windows with -bin
+            mime_type = magic.from_file(file_path, mime=True)
+            
+            allowed_mimes = [
+                'application/x-msi', 
+                'application/x-dosexec', 
+                'application/x-ms-dos-executable',
+                'application/vnd.microsoft.portable-executable',
+                'application/zip',
+                'application/x-zip-compressed'
+            ]
+            
+            if mime_type in allowed_mimes:
+                return True
+            
+            agent_log.security(f"MIME verification failed: Content type {mime_type} is not allowed.")
+            return False
+        except ImportError:
+            agent_log.warning("MIME verification skipped: 'magic' module not found in bundle.")
+            return True
+        except Exception as e:
+            agent_log.warning(f"MIME verification failed: {e}")
+            return True
 
     def verify_signature(self, file_path, signature_b64, expected_hash):
         """Verify RSA signature using the embedded public key"""

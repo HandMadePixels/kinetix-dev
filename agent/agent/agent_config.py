@@ -2,6 +2,7 @@ import os
 import sys
 import configparser
 import keyring
+import base64
 from pathlib import Path
 
 class AgentConfig:
@@ -117,3 +118,69 @@ class AgentConfig:
             keyring.delete_password("KinetixAgent", "refresh_token")
         except keyring.errors.PasswordDeleteError:
             pass
+
+    def get_device_private_key(self):
+        """Retrieve device private key from an encrypted local file"""
+        # Determine base directory
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.abspath(os.path.dirname(__file__))
+            
+        key_path = Path(base_dir) / ".device_key"
+        if not key_path.exists():
+            return None
+            
+        try:
+            from cryptography.fernet import Fernet
+            import hashlib
+            import uuid
+            
+            # Generate a consistent machine-specific key
+            machine_id = str(uuid.getnode()).encode()
+            enc_key = base64.urlsafe_b64encode(hashlib.sha256(machine_id).digest())
+            fernet = Fernet(enc_key)
+            
+            with open(key_path, 'rb') as f:
+                encrypted_data = f.read()
+                return fernet.decrypt(encrypted_data).decode('utf-8')
+        except Exception:
+            return None
+
+    def set_device_private_key(self, key_pem):
+        """Store device private key in an encrypted local file"""
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.abspath(os.path.dirname(__file__))
+            
+        key_path = Path(base_dir) / ".device_key"
+        
+        from cryptography.fernet import Fernet
+        import hashlib
+        import uuid
+        
+        # Generate a consistent machine-specific key
+        machine_id = str(uuid.getnode()).encode()
+        enc_key = base64.urlsafe_b64encode(hashlib.sha256(machine_id).digest())
+        fernet = Fernet(enc_key)
+        
+        encrypted_data = fernet.encrypt(key_pem.encode('utf-8'))
+        with open(key_path, 'wb') as f:
+            f.write(encrypted_data)
+        
+        # Set file to hidden on Windows
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetFileAttributesW(str(key_path), 0x02) # 0x02 is hidden
+        except:
+            pass
+
+    def get_device_public_key(self):
+        """Retrieve device public key from config"""
+        return self.config.get('Agent', 'PublicKey', fallback=None)
+
+    def set_device_public_key(self, key_pem):
+        """Store device public key in config"""
+        self.config.set('Agent', 'PublicKey', key_pem)
+        self.save()
