@@ -20,6 +20,13 @@ class DeviceJWTAuthentication(JWTAuthentication):
             # Standard DRF expects an object with is_authenticated property
             # Device model has this added as a property
             return device
-        except (Device.DoesNotExist, ValidationError):
-            # Fallback to standard User model
-            return super().get_user(validated_token)
+        except (Device.DoesNotExist, ValidationError, ValueError):
+            # If it's a UUID string, it won't be a standard User anyway (which uses integer PKs)
+            # So we check if it's numeric before calling super().get_user to avoid ValueError
+            if isinstance(user_id, str) and not user_id.isdigit():
+                raise exceptions.AuthenticationFailed('Device not found', code='user_not_found')
+                
+            try:
+                return super().get_user(validated_token)
+            except (exceptions.AuthenticationFailed, ValueError):
+                raise exceptions.AuthenticationFailed('User not found', code='user_not_found')

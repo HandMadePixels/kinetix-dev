@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0.."
 :: Check for administrator privileges
 net session >nul 2>&1
 if %errorLevel% == 0 (

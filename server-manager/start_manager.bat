@@ -6,4 +6,4 @@ if not exist "venv\Scripts\activate.bat" (
     exit /b 1
 )
 call venv\Scripts\activate.bat
-python server_manager\manager_gui.py
+python server-manager\manager_gui.py

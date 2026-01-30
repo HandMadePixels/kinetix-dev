@@ -6,6 +6,7 @@ REM This script starts all required services for development
 REM ============================================================================
 
 setlocal enabledelayedexpansion
+cd /d "%~dp0.."
 
 echo.
 echo ============================================================================

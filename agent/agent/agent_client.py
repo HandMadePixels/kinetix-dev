@@ -24,7 +24,7 @@ class AgentClient:
 
             private_key = rsa.generate_private_key(
                 public_exponent=65537,
-                key_size=4096, # Restored to 4096 for maximum security
+                key_size=2048, # Reduced from 4096 for better performance and to prevent service hang
                 backend=default_backend()
             )
             private_pem = private_key.private_bytes(
@@ -88,7 +88,7 @@ class AgentClient:
     def _get_headers(self, authenticated=True):
         headers = {
             'Content-Type': 'application/json',
-            'User-Agent': f'KinetixAgent/1.0.0 (Windows)'
+            'User-Agent': f'KinetixAgent/{self.config.version} (Windows)'
         }
         if authenticated:
             token = self.config.get_token()
@@ -174,9 +174,10 @@ class AgentClient:
             "hostname": hostname,
             "ip_address": ip_address,
             "os_version": os_version,
-            "agent_version": "1.0.0",
+            "agent_version": self.config.version,
             "device_id": self.config.agent_id or None,
-            "device_public_key": public_key_pem
+            "device_public_key": public_key_pem or "",
+            "registration_signature": ""
         }
         
         # SECURITY FIX: Re-Registration Challenge
@@ -221,22 +222,37 @@ class AgentClient:
                 self.config.agent_id = data.get('device_id')
                 self.config.set_token(data.get('token'))
                 
-                # Retrieve and handle refresh token
-                refresh_token_raw = data.get('refresh')
+                # SECURITY FIX: Retrieve and handle nonce for token exchange
+                nonce_raw = data.get('nonce')
                 is_encrypted = data.get('is_encrypted', False)
                 
-                if refresh_token_raw:
+                if nonce_raw:
                     if is_encrypted:
                         try:
-                            refresh_token = self._decrypt_token(refresh_token_raw)
-                            agent_log.info("Successfully decrypted secure refresh token.")
+                            nonce = self._decrypt_token(nonce_raw)
+                            agent_log.info("Successfully decrypted secure registration nonce.")
                         except Exception as e:
-                            agent_log.error(f"Failed to decrypt refresh token: {e}")
-                            refresh_token = refresh_token_raw
+                            agent_log.error(f"Failed to decrypt nonce: {e}")
+                            nonce = nonce_raw
                     else:
-                        refresh_token = refresh_token_raw
+                        nonce = nonce_raw
                     
-                    self.config.set_refresh_token(refresh_token)
+                    # Exchange nonce for refresh token
+                    exchange_url = "token-exchange/"
+                    exchange_payload = {
+                        "device_id": self.config.agent_id,
+                        "nonce": nonce
+                    }
+                    
+                    agent_log.info("Exchanging nonce for initial refresh token...")
+                    exchange_res = self._make_request('POST', exchange_url, json=exchange_payload, authenticated=False, timeout=15)
+                    if exchange_res is not None and exchange_res.status_code == 200:
+                        refresh_token = exchange_res.json().get('refresh')
+                        self.config.set_refresh_token(refresh_token)
+                        agent_log.info("Successfully retrieved refresh token via secure handshake.")
+                    else:
+                        code = exchange_res.status_code if exchange_res else "No Response"
+                        agent_log.error(f"Token exchange failed: {code}")
                 
                 # Save public key if provided (server's public key for update verification)
                 public_key = data.get('public_key')
@@ -289,6 +305,19 @@ class AgentClient:
             agent_log.error(f"Network error during polling: {e}")
             return None
 
+    def get_latest_agent_info(self):
+        """Check server for the latest agent version info"""
+        try:
+            response = self._make_request('GET', 'agent-update/check/', timeout=15)
+            if response is not None and response.status_code == 200:
+                return response.json()
+            elif response is not None and response.status_code == 401:
+                return {"error": "unauthorized"}
+            return None
+        except Exception as e:
+            agent_log.error(f"Error checking for agent update: {e}")
+            return None
+
     def send_inventory(self, inventory_data):
         """Send collected system inventory to server"""
         
@@ -301,6 +330,8 @@ class AgentClient:
             if response is not None and response.status_code in [200, 201]:
                 agent_log.info("Inventory successfully submitted")
                 return True
+            elif response is not None and response.status_code == 401:
+                return {"error": "unauthorized"}
             else:
                 status = response.status_code if response is not None else "Unknown"
                 agent_log.error(f"Failed to send inventory: {status}")

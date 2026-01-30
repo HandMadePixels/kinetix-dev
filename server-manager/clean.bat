@@ -8,6 +8,7 @@ REM Reset: Wipes database and media for a fresh start.
 REM ============================================================================
 
 setlocal enabledelayedexpansion
+cd /d "%~dp0.."
 
 echo.
 echo ============================================================================
@@ -109,11 +110,32 @@ echo [6/7] Data Reset (if selected)...
 if "%TIER%"=="2" (
     echo Wiping database...
     if exist "db.sqlite3" del /f /q "db.sqlite3"
+    
     echo Wiping media updates...
     if exist "media\updates" (
         del /s /q "media\updates\*.*" >nul 2>&1
     )
-    echo [OK] Database and media wiped.
+    
+    echo Wiping security keys...
+    if exist "keys" rd /s /q "keys"
+    if exist "cert.crt" del /f /q "cert.crt"
+    if exist "cert.key" del /f /q "cert.key"
+    
+    echo Scrubbing sensitive keys from .env...
+    if exist ".env" (
+        powershell -Command "(Get-Content .env) -replace '^SECRET_KEY=.*', 'SECRET_KEY=' -replace '^ENCRYPTION_KEY=.*', 'ENCRYPTION_KEY=' | Set-Content .env"
+    )
+
+    echo Cleaning agent build artifacts and MSI files...
+    if exist "agent\agent\build" rd /s /q "agent\agent\build"
+    if exist "agent\agent\dist" rd /s /q "agent\agent\dist"
+    if exist "agent\agent\venv" rd /s /q "agent\agent\venv"
+    del /s /q *.msi >nul 2>&1
+    
+    echo Resetting agent version...
+    if exist "agent\VERSION" echo 1.0.0.0 > "agent\VERSION"
+
+    echo [OK] Database, keys, certificates, and sensitive configs wiped.
 ) else (
     echo [SKIP] Safe Clean: Database and Media preserved.
 )

@@ -1,13 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
-    <Product Id="*" Name="Kinetix Agent" Language="1033" Version="1.0.0.0" Manufacturer="Kinetix" UpgradeCode="7bd4d180-8742-4b71-9c6a-466d18387063">
+    <Product Id="*" Name="Kinetix Agent" Language="1033" Version="1.0.0.52" Manufacturer="Kinetix" UpgradeCode="7bd4d180-8742-4b71-9c6a-466d18387063">
         <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
 
-        <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <MajorUpgrade AllowSameVersionUpgrades="yes" Schedule="afterInstallExecute" DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <Property Id="REINSTALLMODE" Value="amus" />
         <MediaTemplate EmbedCab="yes" />
+
+        <util:CloseApplication Id="KillAgent" Target="kinetix_agent.exe" CloseMessage="no" RebootPrompt="no" TerminateProcess="1" />
+        <util:CloseApplication Id="KillAgentService" Target="kinetix_agent.exe" CloseMessage="no" RebootPrompt="no" TerminateProcess="1" />
 
         <Feature Id="ProductFeature" Title="KinetixAgentInstaller" Level="1">
             <ComponentGroupRef Id="ProductComponents" />
+            <ComponentGroupRef Id="AgentFiles" />
         </Feature>
     </Product>
 
@@ -26,7 +31,7 @@
         <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
             <!-- Main Executable and Service -->
             <Component Id="KinetixAgentExecutable" Guid="a5d2e3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b">
-                <File Id="KinetixAgentEXE" Source="..\dist\kinetix_agent.exe" KeyPath="yes" />
+                <File Id="KinetixAgentEXE" Source="..\dist\kinetix_agent\kinetix_agent.exe" KeyPath="yes" />
                 
                 <!-- Install as Windows Service -->
                 <ServiceInstall Id="ServiceInstaller"
@@ -45,16 +50,16 @@
                                     RestartServiceDelayInSeconds="60"
                                     ResetPeriodInDays="1" />
                 
-                <ServiceControl Id="StartService" Start="install" Stop="both" Remove="uninstall" Name="KinetixAgent" Wait="yes" />
+                <ServiceControl Id="StartService" Start="both" Stop="both" Remove="uninstall" Name="KinetixAgent" Wait="yes" />
             </Component>
 
             <!-- Configuration File -->
-            <Component Id="AgentINI" Guid="b6e7f8a9-c0d1-42e3-94b5-c6d7e8f9a0b1">
+            <Component Id="AgentINI" Guid="b6e7f8a9-c0d1-42e3-94b5-c6d7e8f9a0b1" NeverOverwrite="yes" Permanent="yes">
                 <File Id="ConfigFile" Source="..\agent.ini" KeyPath="yes" />
             </Component>
 
             <!-- Public Key for Verification -->
-            <Component Id="PublicKey" Guid="c7d8e9f0-a1b2-43e4-a5b6-c7d8e9f0a1b2">
+            <Component Id="PublicKey" Guid="c7d8e9f0-a1b2-43e4-a5b6-c7d8e9f0a1b2" NeverOverwrite="yes">
                 <File Id="PubKeyFile" Source="..\public_key.pem" KeyPath="yes" />
             </Component>
             

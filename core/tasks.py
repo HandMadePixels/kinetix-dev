@@ -209,6 +209,96 @@ def monitor_disk_space():
 
 
 @shared_task
+def scan_agent_updates():
+    """
+    Scans the 'agent_drops' directory for new MSI files.
+    Treats this folder as the absolute source of truth for the latest agent version.
+    """
+    import os
+    import re
+    from django.conf import settings
+    from django.core.files import File
+    from core.models import SystemConfig, AuditLog
+    from packaging import version as py_version
+    
+    drop_dir = os.path.join(settings.MEDIA_ROOT, 'agent_drops')
+    if not os.path.exists(drop_dir):
+        os.makedirs(drop_dir)
+        return
+
+    # Look for MSI files
+    files = [f for f in os.listdir(drop_dir) if f.lower().endswith('.msi')]
+    
+    config = SystemConfig.get_config()
+    
+    if not files:
+        # If no files in drop folder, but we have a file in config, 
+        # ensure the config file actually exists on disk to prevent 404s
+        if config.agent_msi_file:
+            if not os.path.exists(config.agent_msi_file.path):
+                logger.warning("Managed agent MSI file missing from disk. Clearing config.")
+                config.agent_msi_file = None
+                config.save()
+        return
+
+    # Sort files by actual version numbers
+    def extract_version(filename):
+        match = re.search(r'(\d+\.\d+\.\d+\.\d+)', filename)
+        return py_version.parse(match.group(1)) if match else py_version.parse("0.0.0.0")
+
+    files.sort(key=extract_version, reverse=True)
+    latest_file = files[0]
+    latest_ver_str = str(extract_version(latest_file))
+    
+    # Logic: If drop folder has a version, it MUST be the one we use.
+    # We update if:
+    # 1. Version string is different
+    # 2. OR the file field is empty
+    # 3. OR the file on disk is missing
+    
+    file_exists = False
+    if config.agent_msi_file:
+        try:
+            file_exists = os.path.exists(config.agent_msi_file.path)
+        except:
+            file_exists = False
+
+    if config.latest_agent_version == latest_ver_str and config.agent_msi_file and file_exists:
+        return
+
+    logger.info(f"Syncing SystemConfig to latest agent in drops: {latest_file} (v{latest_ver_str})")
+    
+    file_path = os.path.join(drop_dir, latest_file)
+    try:
+        with open(file_path, 'rb') as f:
+            config.latest_agent_version = latest_ver_str
+            # Save the file. Django will handle name conflicts by appending suffixes if needed,
+            # but our check above prevents redundant saves.
+            config.agent_msi_file.save(latest_file, File(f), save=True)
+            
+        AuditLog.objects.create(
+            ip_address='127.0.0.1',
+            action='config_change',
+            severity='info',
+            description=f"Agent Update Synced: v{latest_ver_str} picked up from drops folder.",
+            metadata={'filename': latest_file, 'version': latest_ver_str}
+        )
+        
+        # Cleanup: Move to processed
+        processed_dir = os.path.join(drop_dir, 'processed')
+        if not os.path.exists(processed_dir):
+            os.makedirs(processed_dir)
+        
+        dest_path = os.path.join(processed_dir, latest_file)
+        if os.path.exists(dest_path):
+            os.remove(dest_path) # Overwrite old processed file if exists
+        os.rename(file_path, dest_path)
+        
+    except Exception as e:
+        logger.error(f"Error syncing agent update from drops: {e}")
+
+
+@shared_task
 def async_log_event(user_id, device_id, ip_address, user_agent, action, severity, description, resource_type='', resource_id='', metadata=None):
     """
     Asynchronously create an audit log entry.

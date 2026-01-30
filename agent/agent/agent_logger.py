@@ -22,10 +22,12 @@ class AgentLogger:
         # Formatter
         self.formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         
-        # Console Handler (always add)
-        self.console_handler = logging.StreamHandler(sys.stdout)
-        self.console_handler.setFormatter(self.formatter)
-        self.logger.addHandler(self.console_handler)
+        # Console Handler (add only if streams are available)
+        stream = sys.stdout if sys.stdout is not None else sys.stderr
+        if stream is not None:
+            self.console_handler = logging.StreamHandler(stream)
+            self.console_handler.setFormatter(self.formatter)
+            self.logger.addHandler(self.console_handler)
         
         if config:
             self.setup_file_handler(config)

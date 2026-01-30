@@ -18,6 +18,8 @@ app_name = 'api'
 urlpatterns = [
     # Device registration (public endpoint)
     path('register/', views.DeviceRegistrationView.as_view(), name='register'),
+    path('token-exchange/', views.TokenExchangeView.as_view(), name='token-exchange'),
+    path('agent-update/check/', views.AgentUpdateCheckView.as_view(), name='agent-update-check'),
     
     # Update management
     path('updates/', views.UpdateUploadView.as_view(), name='update-upload'),

@@ -20,7 +20,7 @@ Kinetix is a professional-grade, Django-based endpoint management system designe
 - **RSA Signing & Malware Scanning:** Integrated VirusTotal and ClamAV scanning with RSA-4096 (PSS) signature verification.
 
 ### 🛠️ Remote Administration & GUI
-- **Server Manager GUI:** A new dedicated management tool (`server_manager/start_manager.bat`) to control Redis, the production server, and agent builds from a centralized dashboard.
+- **Server Manager GUI:** A new dedicated management tool (`server-manager/start_manager.bat`) to control Redis, the production server, and agent builds from a centralized dashboard.
 - **Interactive Remote Reboot:** Trigger managed restarts with custom admin messages. Uses a robust `schtasks` bypass to display GUIs across Session 0 boundaries.
 - **Diagnostic Resilience:** Multi-layered fallback strategies for data collection, including PowerShell `Get-HotFix` fallback when COM interfaces are unavailable.
 
@@ -44,7 +44,7 @@ Kinetix is a professional-grade, Django-based endpoint management system designe
 
 ### Server Manager 🖥️
 The easiest way to manage the system is via the new **Server Manager**:
-1. Run `server_manager\start_manager.bat`.
+1. Run `server-manager\start_manager.bat`.
 2. Use the **Control Panel** to start Redis and the Production Server.
 3. Use the **Configuration** tab to edit `.env` settings.
 
@@ -68,7 +68,7 @@ Log storage is automatically capped (Default: 5MB per file, 3 backups) to protec
 ## 📁 Project Structure
 ```text
 Kinetix/
-├── server_manager/      # Centralized Management GUI and launchers
+├── server-manager/      # Centralized Management GUI and launchers
 ├── agent/               # Windows Agent source, GUI, and spec files
 ├── api/                 # REST API (Agent-to-Server communication)
 ├── core/                # Core logic, Models (Device, AuditLog), and Security

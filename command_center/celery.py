@@ -35,6 +35,10 @@ app.conf.beat_schedule = {
         'task': 'dashboard.tasks.generate_daily_reports',
         'schedule': crontab(hour=6, minute=0),  # Daily at 6 AM
     },
+    'scan-agent-updates': {
+        'task': 'core.tasks.scan_agent_updates',
+        'schedule': 60.0,  # Every minute
+    },
 }
 
 @app.task(bind=True)

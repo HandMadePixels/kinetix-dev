@@ -6,6 +6,7 @@ REM This script starts the application using Waitress (WSGI) and Celery
 REM ============================================================================
 
 setlocal enabledelayedexpansion
+cd /d "%~dp0.."
 
 REM Ensure production settings are used
 set DEBUG=False
@@ -68,8 +69,8 @@ echo [4/5] Starting application services...
 set CURRENT_DIR=%CD%
 
 REM Start Waitress (WSGI Server)
-echo Starting Waitress server on http://192.168.1.7:8000 ...
-start "Kinetix - Production Web Server" cmd /k "cd /d %CURRENT_DIR% && echo Server is starting... && venv\Scripts\python.exe -m waitress --listen=192.168.1.7:8000 command_center.wsgi:application > logs\server_out.log 2> logs\server_err.log"
+echo Starting Waitress server on http://0.0.0.0:8000 ...
+start "Kinetix - Production Web Server" cmd /k "cd /d %CURRENT_DIR% && echo Server is starting... && venv\Scripts\python.exe -m waitress --listen=0.0.0.0:8000 command_center.wsgi:application > logs\server_out.log 2> logs\server_err.log"
 
 REM Start Celery Worker
 echo Starting Celery worker...

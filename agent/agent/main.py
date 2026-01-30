@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 
 # Ensure the agent directory is in the path for internal imports (when running as a script)
 if not getattr(sys, 'frozen', False):
@@ -40,11 +41,36 @@ if __name__ == '__main__':
             servicemanager.Initialize()
             servicemanager.PrepareToHostSingle(KinetixAgentService)
             servicemanager.StartServiceCtrlDispatcher()
-        except Exception:
-            # Likely double-clicked in Windows Explorer
-            print("Kinetix Agent is designed to run as a Windows Service.")
-            print_help()
-            input("\nPress Enter to exit...")
+        except Exception as e:
+            # Check if this is a real error or just the expected failure when running interactively
+            # ERROR_FAILED_SERVICE_CONTROLLER_CONNECT (1063) indicates it's not being run by the Service Control Manager
+            is_interactive = False
+            try:
+                import pywintypes
+                if isinstance(e, pywintypes.error) and e.winerror == 1063:
+                    is_interactive = True
+            except:
+                pass
+            
+            if is_interactive:
+                print("Kinetix Agent is designed to run as a Windows Service.")
+                print_help()
+                # Only wait for input if we have a valid stdin
+                if sys.stdin and hasattr(sys.stdin, 'readline'):
+                    try:
+                        input("\nPress Enter to exit...")
+                    except (EOFError, RuntimeError):
+                        pass
+                else:
+                    # Non-console environment, wait briefly so user can see output if any
+                    time.sleep(2)
+            else:
+                # Log the actual error to help troubleshoot
+                agent_log.error(f"Service startup error: {e}")
+                import traceback
+                agent_log.error(traceback.format_exc())
+                print(f"Error starting service: {e}")
+                time.sleep(5) # Give user a moment to read the console error if visible
     else:
         cmd = sys.argv[1].lower()
         if cmd == "set-server":

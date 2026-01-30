@@ -7,7 +7,7 @@ This document provides a comprehensive security review, STRIDE threat model, and
 ## 1. Executive Summary
 Kinetix is designed with a "Security-First" architecture. It employs industry-standard cryptographic primitives, robust authentication mechanisms, and proactive defense strategies. The pull-based architecture minimizes the attack surface by avoiding the need for open inbound ports on client devices. 
 
-**v1.5.0 update:** Implemented Hybrid RSA-AES Token Handshake, Cryptographic Re-registration Challenges, HKDF-based Field Isolation, and multi-layer Command Injection protection.
+**v1.6.0 update:** Implemented Hybrid RSA-AES Token Handshake, Cryptographic Re-registration Challenges, HKDF-based Field Isolation, and multi-layer Command Injection protection.
 
 ---
 
@@ -58,13 +58,31 @@ Kinetix is designed with a "Security-First" architecture. It employs industry-st
 
 ---
 
-## 5. Code Review Findings
+## 5. Security Recommendations
+
+### Short-Term
+1. **Enable HTTPS**: Mandatory for protecting the initial public key exchange.
+2. **Key Rotation**: Utilize the built-in Server Manager to rotate the master `ENCRYPTION_KEY` annually.
+3. **MFA Enforcement**: Implement Multi-Factor Authentication for Dashboard administrator accounts.
+
+### Long-Term
+1. **TPM Integration**: Transition agent private keys to Hardware Security Modules (TPM 2.0).
+2. **IP Whitelisting**: Restrict Command Center access to trusted VPN subnets.
+3. **PostgreSQL Migration**: Move to PostgreSQL for enhanced row-level security and concurrency.
+
+---
+
+## 6. Code Review Findings
 
 ### 🛡️ Strengths
 - **Zero-Knowledge Architecture**: Private keys never transit the network.
 - **Cryptographic Isolation**: HKDF prevents cross-field decryption if a specific key is leaked.
 - **Resilient Diagnostics**: PowerShell fallbacks ensure visibility in restricted environments without introducing injection risks.
 - **Real-Time SPA Security**: Asynchronous table updates minimize full-page re-renders, reducing traditional XSS vectors.
+
+### ⚠️ Areas for Improvement
+- **Large Shell Output**: Agent currently returns full output strings; recommend truncation for extremely large buffers.
+- **Key Storage**: While DPAPI is secure, it is tied to the SYSTEM user; ensure local administrative access is restricted.
 
 ---
 **Security Status: HARDENED**

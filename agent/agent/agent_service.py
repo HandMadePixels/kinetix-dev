@@ -15,6 +15,7 @@ from agent_config import AgentConfig
 from agent_client import AgentClient
 from agent_collector import InventoryCollector
 from agent_updater import AgentUpdater
+from packaging import version as py_version
 
 class KinetixAgentService(win32serviceutil.ServiceFramework):
     """Windows Service wrapper for the Kinetix Agent"""
@@ -127,9 +128,23 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
 
         last_inventory_time = 0
         inventory_interval = 86400  # daily
+        last_update_check = 0
         
         while self.running:
             try:
+                # 0. Check for Agent Self-Update
+                now = time.time()
+                if now - last_update_check > self.config.update_check_interval:
+                    update_res = self.check_for_self_update()
+                    if update_res == "network_error":
+                        # Don't update timestamp, try again next cycle
+                        agent_log.warning("Update check skipped due to network error, will retry next poll.")
+                    else:
+                        if update_res is True:
+                            agent_log.info("Self-update triggered. Exiting main loop to allow installer to proceed.")
+                            break # Exit loop immediately
+                        last_update_check = now
+
                 # 1. Poll for commands
                 response = self.client.get_commands()
                 
@@ -137,8 +152,10 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                     # Re-register if token is invalid
                     sys_info = self.collector.get_system_info()
                     self.client.register(sys_info['hostname'], sys_info['ip_address'], sys_info['os_version'])
-
-                if response:
+                elif response is None:
+                    # Network error, will retry next poll
+                    agent_log.warning("Command poll failed (network), skipping this cycle.")
+                elif response:
                     # Sync poll interval if provided
                     server_poll_interval = response.get('poll_interval')
                     if server_poll_interval and server_poll_interval != self.config.poll_interval:
@@ -152,8 +169,6 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                             self.process_command(cmd)
                     
                     # SECURITY OPTIMIZATION: "Chain Polling"
-                    # If we just received commands, don't wait for the next sleep cycle.
-                    # Loop back immediately to check for more. This provides "Immediate" reflection.
                     if has_commands:
                         agent_log.info("Commands received, triggering immediate re-poll...")
                         continue 
@@ -163,16 +178,106 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 if now - last_inventory_time > inventory_interval:
                     agent_log.info("Collecting and sending inventory...")
                     inventory_data = self.collector.collect_full_inventory()
-                    if self.client.send_inventory(inventory_data):
+                    response = self.client.send_inventory(inventory_data)
+                    if response is True:
                         last_inventory_time = now
+                    elif response is None:
+                        agent_log.warning("Inventory submission failed (network), will retry next poll.")
+                    elif isinstance(response, dict) and response.get("error") == "unauthorized":
+                        agent_log.warning("Inventory submission unauthorized, re-registering...")
+                        sys_info = self.collector.get_system_info()
+                        self.client.register(sys_info['hostname'], sys_info['ip_address'], sys_info['os_version'])
 
             except Exception as e:
-                agent_log.error(f"Error in main loop: {e}")
+                import traceback
+                error_msg = f"Error in main loop: {e}\n{traceback.format_exc()}"
+                agent_log.error(error_msg)
 
             # Wait for poll interval or stop event
             rc = win32event.WaitForSingleObject(self.stop_event, self.config.poll_interval * 1000)
             if rc == win32event.WAIT_OBJECT_0:
                 break
+
+        # If we exited the loop but are still running (e.g. self-update), 
+        # inform SCM that we are stopping so it doesn't report a crash.
+        if not self.running:
+            return
+
+        agent_log.info("Service process terminating gracefully for update...")
+        try:
+            self.ReportServiceStatus(win32service.SERVICE_STOPPED)
+        except:
+            pass
+            
+        # Exit. sys.exit is cleaner than os._exit for a graceful stop
+        sys.exit(0)
+
+    def check_for_self_update(self):
+        """Check for and apply agent self-updates"""
+        agent_log.info(f"Checking for agent self-update (Current version: {self.config.version})...")
+        update_info = self.client.get_latest_agent_info()
+        
+        if update_info is None:
+            return "network_error"
+
+        if isinstance(update_info, dict) and update_info.get("error") == "unauthorized":
+            agent_log.warning("Update check unauthorized, re-registering...")
+            sys_info = self.collector.get_system_info()
+            self.client.register(sys_info['hostname'], sys_info['ip_address'], sys_info['os_version'])
+            return "unauthorized"
+
+        # Sync update check interval if provided
+        server_interval = update_info.get('update_interval')
+        if server_interval and server_interval != self.config.update_check_interval:
+            agent_log.info(f"Syncing agent update interval with server: {server_interval}s")
+            self.config.update_check_interval = server_interval
+
+        if 'latest_version' not in update_info:
+            return
+
+        latest_version = update_info['latest_version']
+        try:
+            if py_version.parse(latest_version) <= py_version.parse(self.config.version):
+                agent_log.info(f"Agent is up to date (Current: {self.config.version}, Server: {latest_version}).")
+                return
+        except Exception as e:
+            agent_log.error(f"Version comparison error: {e}")
+            if latest_version == self.config.version:
+                return
+
+        agent_log.info(f"New agent version available: {latest_version}. Starting auto-update...")
+        
+        url = update_info['url']
+        expected_hash = update_info['sha256']
+        
+        temp_path = os.path.join(self.updater.temp_dir, f"agent_update_{latest_version}.msi")
+        
+        if self.updater.download_file(url, temp_path):
+            if self.updater.verify_hash(temp_path, expected_hash):
+                agent_log.info("Agent update verified. Triggering installation...")
+                
+                # Report start of update
+                self.client.send_command_status("AGENT_SELF_UPDATE", "in_progress", f"Updating to {latest_version}")
+                
+                # Give the system 3 seconds to flush logs and send the status message
+                time.sleep(3)
+
+                # Run the installer. Since we are a service, msiexec will stop us, 
+                # update files, and restart us if WiX is configured correctly.
+                # Use REINSTALLMODE=amus to force overwrite same files.
+                if self.updater.install_update(temp_path):
+                    agent_log.info("Agent update installer launched successfully.")
+                    return True # Indicate that update is in progress
+                else:
+                    agent_log.error("Failed to launch agent update installer.")
+                    self.client.send_command_status("AGENT_SELF_UPDATE", "failed", "Installer launch failed")
+            else:
+                agent_log.security("Agent update hash verification failed!")
+                self.client.send_command_status("AGENT_SELF_UPDATE", "failed", "Hash verification failed")
+        else:
+            agent_log.error("Failed to download agent update.")
+        
+        return False # No update started
 
     def process_command(self, cmd):
         """Dispatch command to a background thread to prevent blocking"""
@@ -454,48 +559,63 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                     run_cmd = f'"{python_exe}" "{gui_path}" "{message}" "{socket.gethostname()}" "0"'
                 
                 # To bypass schtasks quoting hell, we write the command to a temporary batch file
-                # Use C:\Users\Public as it is accessible by both SYSTEM and interactive users
-                public_temp = os.path.join(os.environ.get('SystemDrive', 'C:'), 'Users', 'Public', 'KinetixAgent')
+                system_drive = os.environ.get('SystemDrive', 'C:')
+                if not system_drive.endswith('\\'):
+                    system_drive += '\\'
+                
+                public_temp = os.path.join(system_drive, 'Users', 'Public', 'KinetixAgent')
                 if not os.path.exists(public_temp):
                     os.makedirs(public_temp)
+                    # Ensure the interactive user can actually see/run things in this folder
+                    subprocess.run(f'icacls "{public_temp}" /grant Everyone:(OI)(CI)F /T', shell=True, capture_output=True)
                 
                 temp_bat = os.path.join(public_temp, f"reboot_{int(time.time())}.bat")
                 temp_log = temp_bat + ".log"
                 
                 with open(temp_bat, 'w') as f:
                     f.write("@echo off\n")
+                    f.write(f"cd /d \"{public_temp}\"\n")
                     f.write(f"echo [%date% %time%] Starting Reboot UI > \"{temp_log}\"\n")
                     f.write(f"echo Command: {run_cmd} >> \"{temp_log}\"\n")
                     f.write(f"{run_cmd} >> \"{temp_log}\" 2>&1\n")
                     f.write(f"echo [%date% %time%] UI process exited with code %errorlevel% >> \"{temp_log}\"\n")
                     f.write(f"del \"%~f0\" & exit\n")
 
+                # Ensure the batch file itself is accessible/executable by Everyone
+                subprocess.run(f'icacls "{temp_bat}" /grant Everyone:F /T', shell=True, capture_output=True)
+
                 # To bypass Session 0 isolation, we use schtasks to run the process in the interactive session.
-                task_name = f"KinetixRebootUI_{int(time.time())}"
+                # Use a shorter, cleaner task name
+                task_id = int(time.time() % 100000)
+                task_name = f"KinetixReboot_{task_id}"
                 
-                # Correct triple-quote strategy for schtasks /tr:
-                # The entire command must be in quotes, and the internal path must also be in quotes.
-                # Format: schtasks /create ... /tr "\"C:\path\to\script.bat\""
-                tr_cmd = f'\"\\\"{temp_bat}\\\"\"'
-                full_task_cmd = f'schtasks /create /tn \"{task_name}\" /tr {tr_cmd} /sc once /st 00:00 /ru \"INTERACTIVE\" /it /f /rl highest'
-                agent_log.info(f"Creating task: {full_task_cmd}")
+                # We use /sd 01/01/2099 to ensure the task isn't "expired" at creation.
+                # Use cmd.exe /c to launch the batch file. This is more robust than relying on file associations
+                # directly in the task scheduler, especially across different OS versions.
+                # Quoting: /tr "cmd.exe /c \"path_to_bat\""
+                full_task_cmd = f'schtasks /create /tn "{task_name}" /tr "cmd.exe /c \\"{temp_bat}\\"" /sc once /st 00:00 /sd 01/01/2099 /ru "INTERACTIVE" /it /f /rl highest'
+                agent_log.info(f"Creating interactive task: {full_task_cmd}")
                 
                 create_res = subprocess.run(full_task_cmd, shell=True, capture_output=True, text=True)
                 if create_res.returncode != 0:
-                    # Fallback for older Windows
-                    full_task_cmd = f'schtasks /create /tn \"{task_name}\" /tr {tr_cmd} /sc once /st 00:00 /sd 01/01/2099 /ru \"INTERACTIVE\" /it /f /rl highest'
-                    create_res = subprocess.run(full_task_cmd, shell=True, capture_output=True, text=True)
-                    if create_res.returncode != 0:
-                        if os.path.exists(temp_bat): os.remove(temp_bat)
-                        raise Exception(f"schtasks create failed: {create_res.stderr}")
+                    agent_log.error(f"Task creation failed: {create_res.stdout} {create_res.stderr}")
+                    # KEEPING THE BAT FILE FOR DEBUGGING
+                    raise Exception(f"schtasks create failed: {create_res.stderr}")
+                
+                agent_log.info(f"Task created successfully: {create_res.stdout.strip()}")
+                time.sleep(1)
                     
+                # Trigger the task immediately
                 run_res = subprocess.run(f'schtasks /run /tn "{task_name}"', shell=True, capture_output=True, text=True)
                 if run_res.returncode != 0:
-                    if os.path.exists(temp_bat): os.remove(temp_bat)
+                    agent_log.error(f"Task run failed: {run_res.stdout} {run_res.stderr}")
+                    # KEEPING THE BAT FILE FOR DEBUGGING
                     raise Exception(f"schtasks run failed: {run_res.stderr}")
                 
-                # Clean up the task after a short delay (batch file self-deletes)
-                threading.Timer(60, lambda: subprocess.run(f'schtasks /delete /tn "{task_name}" /f', shell=True, capture_output=True)).start()
+                agent_log.info("Reboot UI task triggered successfully.")
+                
+                # Cleanup the task after 5 minutes (instead of 60s) to give it room to breathe
+                threading.Timer(300, lambda: subprocess.run(f'schtasks /delete /tn "{task_name}" /f', shell=True, capture_output=True)).start()
 
                 self.client.send_command_status(command_id, 'completed', "Interactive UI triggered via scheduled task batch wrapper")
                 agent_log.info("Triggered reboot UI via scheduled task batch wrapper")

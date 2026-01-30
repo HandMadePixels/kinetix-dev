@@ -7,6 +7,7 @@ REM Run this script to set up the development environment in minutes
 REM ============================================================================
 
 setlocal enabledelayedexpansion
+cd /d "%~dp0.."
 
 echo.
 echo ============================================================================
@@ -173,7 +174,7 @@ echo.
 echo NEXT STEPS:
 echo.
 echo 1. Start Services:
-echo    run_dev.bat
+echo    server-manager\run_dev.bat
 echo.
 echo 2. Access the application:
 echo    Web Interface: http://localhost:8000
@@ -181,7 +182,7 @@ echo    Admin Panel:   http://localhost:8000/admin
 echo.
 echo ============================================================================
 echo.
-echo TIP: Run 'run_dev.bat' to start all services (including Redis) automatically
+echo TIP: Run 'server-manager\run_dev.bat' to start all services (including Redis) automatically
 echo.
 echo For more information, see QUICKSTART.md
 echo ============================================================================

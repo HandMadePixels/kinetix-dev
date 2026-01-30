@@ -46,6 +46,7 @@ class Device(models.Model):
     refresh_inventory_requested = models.BooleanField(default=False)
     ip_mismatch = models.BooleanField(default=False, help_text="True if reported IP differs from connection IP")
     registration_public_key = models.TextField(blank=True, null=True, help_text="The agent's unique public key for re-registration challenges")
+    registration_nonce = models.CharField(max_length=64, blank=True, null=True, help_text="Temporary nonce for secure token exchange")
     last_heartbeat_audit = models.DateTimeField(null=True, blank=True, help_text="Timestamp of the last time this device's heartbeat was audited")
     
     INVENTORY_STATUS_CHOICES = [
@@ -223,9 +224,15 @@ class SystemConfig(models.Model):
     # Rate limiting
     api_rate_limit_per_minute = models.IntegerField(default=100)
     upload_rate_limit_per_hour = models.IntegerField(default=10)
+    agent_update_interval = models.IntegerField(default=3600, help_text="How often agents check for self-updates (in seconds)")
     
     # File upload
     max_upload_size_mb = models.IntegerField(default=500)
+    
+    # Agent Auto-Update
+    latest_agent_version = models.CharField(max_length=50, default='1.0.0.0')
+    agent_msi_file = models.FileField(upload_to='agent_updates/', null=True, blank=True)
+    agent_msi_sha256 = models.CharField(max_length=64, blank=True, help_text="SHA256 hash of the agent installer")
     
     # Security
     require_update_signature = models.BooleanField(default=True)
@@ -256,8 +263,22 @@ class SystemConfig(models.Model):
         return config
     
     def save(self, *args, **kwargs):
-        """Ensure only one instance exists"""
+        """Ensure only one instance exists and handle agent MSI hashing"""
         self.pk = 1
+        
+        # Auto-compute hash if MSI file is changed
+        if self.agent_msi_file:
+            try:
+                import hashlib
+                hasher = hashlib.sha256()
+                # If it's a new file object, hash it
+                if hasattr(self.agent_msi_file, 'file'):
+                    for chunk in self.agent_msi_file.chunks():
+                        hasher.update(chunk)
+                    self.agent_msi_sha256 = hasher.hexdigest()
+            except Exception as e:
+                print(f"Error hashing agent MSI: {e}")
+
         super().save(*args, **kwargs)
     
     def delete(self, *args, **kwargs):
@@ -305,6 +326,8 @@ class RemoteCommand(models.Model):
     """Generic remote execution commands for agents"""
     
     # Validator to prevent command injection characters
+    # Only block critical shell operators: ; & | ` $ < > 
+    # Must allow: \ (file paths), {} (MSI GUIDs), () (Program Files (x86)), " (quotes)
     PAYLOAD_VALIDATOR = RegexValidator(
         regex=r'^[^;&|`\$<>]+$',
         message="Payload contains forbidden characters (; & | ` $ < >) to prevent command injection.",

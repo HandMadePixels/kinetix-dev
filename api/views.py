@@ -58,7 +58,7 @@ class DeviceRegistrationView(generics.CreateAPIView):
             'device_id': str(result['device'].id),
             'hostname': result['device'].hostname,
             'token': result['token'],
-            'refresh': result['refresh'],
+            'nonce': result['nonce'],
             'is_encrypted': result.get('is_encrypted', False),
             'public_key': result['public_key']
         }, status=status.HTTP_201_CREATED)
@@ -71,6 +71,79 @@ class DeviceRegistrationView(generics.CreateAPIView):
         else:
             ip = self.request.META.get('REMOTE_ADDR', '0.0.0.0')
         return ip
+
+
+class TokenExchangeView(generics.GenericAPIView):
+    """
+    Exchanges a registration nonce for the initial refresh token.
+    Minimizes refresh token exposure in registration response.
+    """
+    
+    from api.serializers import TokenExchangeSerializer
+    serializer_class = TokenExchangeSerializer
+    permission_classes = [AllowAny]
+    throttle_scope = 'register'
+    
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        device_id = serializer.validated_data['device_id']
+        nonce = serializer.validated_data['nonce']
+        
+        device = get_object_or_404(Device, id=device_id)
+        
+        if not device.registration_nonce or device.registration_nonce != nonce:
+            AuditLog.objects.create(
+                device=device,
+                ip_address=self.get_client_ip(),
+                action='failed_auth',
+                severity='warning',
+                description=f"Invalid token exchange attempt for {device.hostname}",
+                metadata={'reason': 'invalid_nonce'}
+            )
+            return Response({'error': 'Invalid or expired nonce'}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Success - provide refresh token and clear nonce
+        refresh_token = device.auth_token
+        device.registration_nonce = ''
+        device.save(update_fields=['registration_nonce'])
+        
+        return Response({
+            'refresh': refresh_token
+        })
+
+    def get_client_ip(self):
+        """Extract client IP from request"""
+        x_forwarded_for = self.request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = self.request.META.get('REMOTE_ADDR', '0.0.0.0')
+        return ip
+
+
+class AgentUpdateCheckView(generics.GenericAPIView):
+    """
+    Endpoint for agents to check if a new version of the agent is available.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        config = SystemConfig.get_config()
+        
+        response_data = {
+            'update_interval': config.agent_update_interval
+        }
+        
+        if config.agent_msi_file:
+            response_data.update({
+                'latest_version': config.latest_agent_version,
+                'url': request.build_absolute_uri(config.agent_msi_file.url),
+                'sha256': config.agent_msi_sha256
+            })
+            
+        return Response(response_data)
 
 
 class DeviceViewSet(viewsets.ModelViewSet):
@@ -738,15 +811,63 @@ class RemoteCommandStatusView(generics.GenericAPIView):
     def post(self, request):
         data = request.data
         command_id = data.get('command_id')
-        status = data.get('status') # 'completed' or 'failed'
+        status_val = data.get('status') # 'completed', 'failed', 'in_progress'
         message = data.get('message', '')
+        device = request.user
 
-        rcmd = get_object_or_404(RemoteCommand, id=command_id, device=request.user)
-        rcmd.status = status
+        # Special case: Agent Self-Update reporting
+        if command_id == "AGENT_SELF_UPDATE":
+            # Log to AuditLog for immediate visibility in history
+            AuditLog.objects.create(
+                device=device,
+                ip_address=self.get_client_ip(),
+                action='device_update',
+                severity='info' if status_val != 'failed' else 'error',
+                description=f"Agent Self-Update: {status_val.replace('_', ' ').title()} - {message}",
+                resource_type='AgentUpdate',
+                resource_id=command_id,
+                metadata={'status': status_val, 'message': message}
+            )
+            
+            # Create/Update a RemoteCommand record so it shows up in Command History
+            # We use a consistent dummy UUID-like string or just a descriptive payload
+            # Search for an existing "Self-Update" record for this device that isn't finished
+            rcmd = RemoteCommand.objects.filter(
+                device=device, 
+                command_type='restart_agent', 
+                payload__contains='Self-update'
+            ).exclude(status__in=['completed', 'failed']).first()
+
+            if not rcmd:
+                rcmd = RemoteCommand.objects.create(
+                    device=device,
+                    command_type='restart_agent',
+                    status='sent' if status_val == 'in_progress' else status_val,
+                    payload=f"Automated Self-update to latest version",
+                    result_message=message
+                )
+            else:
+                rcmd.status = 'completed' if status_val == 'completed' else ('failed' if status_val == 'failed' else 'sent')
+                rcmd.result_message = message
+                rcmd.save()
+                
+            return Response({'status': 'ok'})
+
+        rcmd = get_object_or_404(RemoteCommand, id=command_id, device=device)
+        rcmd.status = status_val
         rcmd.result_message = message
         rcmd.save()
 
         return Response({'status': 'ok'})
+
+    def get_client_ip(self):
+        """Extract client IP from request"""
+        x_forwarded_for = self.request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = self.request.META.get('REMOTE_ADDR', '0.0.0.0')
+        return ip
 
 class RemoteCommandActionView(generics.GenericAPIView):
     """Dashboard triggers a remote command (e.g. uninstall)"""
@@ -786,14 +907,20 @@ class RemoteCommandActionView(generics.GenericAPIView):
         device = get_object_or_404(Device, id=device_id)
         
         try:
-            rcmd = RemoteCommand.objects.create(
+            rcmd = RemoteCommand(
                 device=device,
                 command_type=cmd_type,
                 payload=payload,
                 created_by=request.user
             )
+            # Trigger model validation (including PAYLOAD_VALIDATOR)
+            rcmd.full_clean()
+            rcmd.save()
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            error_msg = str(e)
+            if hasattr(e, 'message_dict'):
+                error_msg = str(e.message_dict)
+            return Response({'error': error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         AuditLog.objects.create(
             user=request.user,

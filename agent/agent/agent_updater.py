@@ -142,49 +142,65 @@ class AgentUpdater:
 
     def install_update(self, file_path, args=None):
         """Execute update installer silently"""
+        import shutil
+        import tempfile
         try:
             ext = os.path.splitext(file_path)[1].lower()
             
             if ext == '.msi':
-                # Create a log file path for msiexec in the agent logs directory
-                log_dir = os.path.join(self.base_dir, 'logs')
-                if not os.path.exists(log_dir):
-                    os.makedirs(log_dir)
-                log_file = os.path.join(log_dir, f"install_{int(time.time())}.log")
+                # SECURITY/STABILITY: Copy MSI to system temp folder. 
+                # If we run it from the installation dir, it might get deleted/locked during the upgrade.
+                sys_temp = tempfile.gettempdir()
+                target_msi = os.path.join(sys_temp, os.path.basename(file_path))
+                shutil.copy2(file_path, target_msi)
+                
+                # Create a log file path for msiexec
+                log_file = os.path.join(sys_temp, f"kinetix_install_{int(time.time())}.log")
 
-                # ALLUSERS=1 forces per-machine installation (crucial for SYSTEM services)
-                # REINSTALLMODE=amus ensures we overwrite/upgrade correctly
+                # /i : install
+                # /quiet : no UI
+                # /norestart : don't reboot the machine
+                # ALLUSERS=1 : per-machine install
+                # ALLUSERS=1 : per-machine install
                 cmd = [
-                    'msiexec', '/i', file_path, 
+                    'msiexec', '/i', f'"{target_msi}"', 
                     '/quiet', '/norestart', 
-                    'ALLUSERS=1', 'REINSTALLMODE=amus',
-                    f'/L*V', log_file
+                    'ALLUSERS=1',
+                    f'/L*V', f'"{log_file}"'
                 ]
                 if args:
                     cmd.extend(args.split())
+                
+                agent_log.info(f"Launching MSI installer: {' '.join(cmd)}")
+                
+                # Use DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP to ensure the installer
+                # stays alive after the agent service process exits.
+                # Only on Windows.
+                creation_flags = 0
+                if os.name == 'nt':
+                    creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008 # DETACHED_PROCESS
+                
+                subprocess.Popen(' '.join(cmd), shell=True, close_fds=True, creationflags=creation_flags)
+                return True
+
             elif ext == '.exe':
                 cmd = [file_path, '/S', '/v', '/qn'] # Standard silent flags
                 if args:
                     cmd.extend(args.split())
+                agent_log.info(f"Executing EXE install: {' '.join(cmd)}")
+                result = subprocess.run(cmd, shell=False, capture_output=True, text=True)
+                return result.returncode == 0
             else:
                 agent_log.error(f"Unsupported file extension: {ext}")
                 return False
 
-            agent_log.info(f"Executing install: {' '.join(cmd)}")
-            result = subprocess.run(cmd, shell=False, capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                agent_log.info("Installation successful")
-                return True
-            else:
-                agent_log.error(f"Installation failed with return code {result.returncode}: {result.stderr}")
-                return False
         except Exception as e:
             agent_log.error(f"Installation error: {e}")
             return False
         finally:
-            # Cleanup temp file
-            try:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-            except: pass
+            # We don't cleanup MSI here anymore because Popen is async
+            if ext != '.msi':
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except: pass

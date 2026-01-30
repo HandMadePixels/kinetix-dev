@@ -87,8 +87,8 @@ class DeviceRegistrationSerializer(serializers.Serializer):
     ip_address = serializers.IPAddressField()
     os_version = serializers.CharField(max_length=255)
     device_id = serializers.UUIDField(required=False, allow_null=True)
-    device_public_key = serializers.CharField(required=False, allow_blank=True) # PEM format
-    registration_signature = serializers.CharField(required=False, allow_blank=True) # Base64 signature
+    device_public_key = serializers.CharField(required=False, allow_blank=True, allow_null=True) # PEM format
+    registration_signature = serializers.CharField(required=False, allow_blank=True, allow_null=True) # Base64 signature
     
     def create(self, validated_data):
         """Create or update device and generate JWT token"""
@@ -114,7 +114,11 @@ class DeviceRegistrationSerializer(serializers.Serializer):
             # If the device was previously registered with a public key, we MUST verify identity
             if existing_device.registration_public_key:
                 if not reg_sig:
-                    raise serializers.ValidationError("Identity verification required: registration_signature missing.")
+                    raise serializers.ValidationError(
+                        f"Identity verification required for hostname '{hostname}'. "
+                        "The agent must provide a valid signature. If this is a fresh install, "
+                        "please delete the existing device from the Command Center first."
+                    )
                 
                 # Verify that the agent owns the private key for the stored public key
                 # We verify against the hostname + device_id string
@@ -129,7 +133,10 @@ class DeviceRegistrationSerializer(serializers.Serializer):
                         severity='critical',
                         description=f"CRITICAL: Re-registration identity mismatch for {hostname}. Potential impersonation attempt."
                     )
-                    raise serializers.ValidationError("Identity verification failed. Secure re-registration mismatch.")
+                    raise serializers.ValidationError(
+                        "Identity verification failed. Secure re-registration mismatch. "
+                        "If you have reinstalled the agent, you must delete the previous record from the dashboard."
+                    )
 
             # 3. ID Mismatch Check (if provided)
             if device_id and str(existing_device.id) != str(device_id):
@@ -161,20 +168,22 @@ class DeviceRegistrationSerializer(serializers.Serializer):
         access_token = str(refresh.access_token)
         refresh_token_str = str(refresh)
         
-        # Store encrypted refresh token for persistence
+        # Security Fix: Generate a temporary nonce for token exchange
+        import secrets
+        nonce = secrets.token_urlsafe(32)
+        
+        # Store encrypted refresh token and nonce for persistence
         device.auth_token = refresh_token_str
+        device.registration_nonce = nonce
         device.save()
         
-        # Security Fix: If agent provided a public key, encrypt the refresh token
+        # Security Fix: If agent provided a public key, encrypt the nonce (not the token)
         is_encrypted = False
-        final_refresh = refresh_token_str
-        
-        # Use provided key for this response, even if it's the same as stored
-        effective_pub_key = device_pub_key or device.registration_public_key
+        final_nonce = nonce
         
         if device_pub_key:
             try:
-                final_refresh = encrypt_with_public_key(refresh_token_str, device_pub_key)
+                final_nonce = encrypt_with_public_key(nonce, device_pub_key)
                 is_encrypted = True
             except Exception as e:
                 # Fallback to plain if encryption fails (for debugging/legacy)
@@ -187,7 +196,7 @@ class DeviceRegistrationSerializer(serializers.Serializer):
         return {
             'device': device,
             'token': access_token,
-            'refresh': final_refresh,
+            'nonce': final_nonce, # Return nonce instead of refresh token
             'is_encrypted': is_encrypted,
             'public_key': keypair.public_key
         }
@@ -580,3 +589,8 @@ class RemoteCommandSerializer(serializers.ModelSerializer):
             'created_by', 'created_by_username'
         ]
         read_only_fields = ['id', 'created_at', 'executed_at']
+
+class TokenExchangeSerializer(serializers.Serializer):
+    """Serializer for exchanging registration nonce for refresh token"""
+    nonce = serializers.CharField()
+    device_id = serializers.UUIDField()

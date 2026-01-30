@@ -26,6 +26,7 @@ class ServerManagerApp:
         
         self.create_control_panel()
         self.create_config_panel()
+        self.create_backup_panel()
         
         # Log Area
         self.log_frame = ttk.LabelFrame(root, text="Activity Log")
@@ -106,6 +107,7 @@ class ServerManagerApp:
             ("DATABASE_URL", "Database URL"),
             ("VIRUSTOTAL_API_KEY", "VirusTotal API Key"),
             ("CLAMAV_ENABLED", "Enable ClamAV (True/False)"),
+            ("AGENT_UPDATE_INTERVAL", "Agent Self-Update Check Interval (seconds)"),
             ("ENCRYPTION_KEY", "Encryption Key (Do Not Change!)"),
         ]
         
@@ -212,12 +214,123 @@ class ServerManagerApp:
     def start_production_server(self):
         # triggers quickstart.bat and then production_server.bat
         # We can chain them in one command
-        cmd = "quickstart.bat && production_server.bat"
+        cmd = r"server-manager\quickstart.bat && server-manager\production_server.bat"
         self.run_command(cmd, "Kinetix Production Server")
 
     def build_agent_msi(self):
-        cmd = r"agent\build_agent_msi.bat"
+        cmd = r"server-manager\build_agent_msi.bat"
         self.run_command(cmd, "Build Agent MSI")
+
+    def create_backup_panel(self):
+        frame = ttk.Frame(self.notebook)
+        self.notebook.add(frame, text="Backup & Restore")
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Button(btn_frame, text="Create New Full Backup", command=self.create_backup).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Refresh List", command=self.refresh_backup_list).pack(side='left', padx=5)
+        
+        # List of backups
+        list_label = ttk.Label(frame, text="Available Backups (in /backups folder):")
+        list_label.pack(anchor='w', padx=15)
+        
+        self.backup_listbox = tk.Listbox(frame, height=15)
+        self.backup_listbox.pack(fill='both', expand=True, padx=15, pady=5)
+        
+        # Restore button
+        restore_btn = ttk.Button(frame, text="Restore Selected Backup", command=self.restore_backup)
+        restore_btn.pack(pady=10)
+        
+        self.refresh_backup_list()
+
+    def get_backup_dir(self):
+        bck_dir = os.path.join(PROJECT_ROOT, "backups")
+        if not os.path.exists(bck_dir):
+            os.makedirs(bck_dir)
+        return bck_dir
+
+    def refresh_backup_list(self):
+        self.backup_listbox.delete(0, tk.END)
+        import glob
+        files = glob.glob(os.path.join(self.get_backup_dir(), "*.zip"))
+        files.sort(key=os.path.getmtime, reverse=True)
+        for f in files:
+            self.backup_listbox.insert(tk.END, os.path.basename(f))
+
+    def create_backup(self):
+        import zipfile
+        from datetime import datetime
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"kinetix_backup_{timestamp}.zip"
+        filepath = os.path.join(self.get_backup_dir(), filename)
+        
+        self.log(f"Starting backup: {filename}")
+        
+        try:
+            with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # 1. Database
+                db_path = os.path.join(PROJECT_ROOT, "db.sqlite3")
+                if os.path.exists(db_path):
+                    zipf.write(db_path, "db.sqlite3")
+                
+                # 2. Config
+                env_path = os.path.join(PROJECT_ROOT, ".env")
+                if os.path.exists(env_path):
+                    zipf.write(env_path, ".env")
+                
+                # 3. Keys
+                keys_dir = os.path.join(PROJECT_ROOT, "keys")
+                if os.path.exists(keys_dir):
+                    for root, dirs, files in os.walk(keys_dir):
+                        for file in files:
+                            full_path = os.path.join(root, file)
+                            arc_name = os.path.relpath(full_path, PROJECT_ROOT)
+                            zipf.write(full_path, arc_name)
+                
+                # 4. Media
+                media_dir = os.path.join(PROJECT_ROOT, "media")
+                if os.path.exists(media_dir):
+                    for root, dirs, files in os.walk(media_dir):
+                        if 'processed' in root: continue
+                        for file in files:
+                            full_path = os.path.join(root, file)
+                            arc_name = os.path.relpath(full_path, PROJECT_ROOT)
+                            zipf.write(full_path, arc_name)
+
+            self.log(f"Backup successful: {filename}")
+            messagebox.showinfo("Success", f"Backup created successfully:\n{filename}")
+            self.refresh_backup_list()
+        except Exception as e:
+            self.log(f"Backup failed: {e}")
+            messagebox.showerror("Error", f"Backup failed: {e}")
+
+    def restore_backup(self):
+        selection = self.backup_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a backup to restore.")
+            return
+            
+        filename = self.backup_listbox.get(selection[0])
+        if not messagebox.askyesno("Confirm Restore", f"This will OVERWRITE current database and settings with {filename}.\n\nContinue?"):
+            return
+            
+        import zipfile
+        filepath = os.path.join(self.get_backup_dir(), filename)
+        
+        try:
+            self.log(f"Restoring backup: {filename}")
+            with zipfile.ZipFile(filepath, 'r') as zipf:
+                zipf.extractall(PROJECT_ROOT)
+            
+            self.log("Restore complete.")
+            messagebox.showinfo("Success", "System restored. Please restart services.")
+            self.load_env()
+        except Exception as e:
+            self.log(f"Restore failed: {e}")
+            messagebox.showerror("Error", f"Restore failed: {e}")
 
 if __name__ == "__main__":
     try:

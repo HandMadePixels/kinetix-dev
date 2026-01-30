@@ -12,7 +12,7 @@ Kinetix is built on a **Pull-Based Architecture**, designed to work seamlessly w
 -   **Kinetix Command Center**: A Django-based central management server (CMS) providing a RESTful API and a modern web dashboard.
 -   **Kinetix Endpoint Agent**: A Python-based Windows Service that polls the Command Center for instructions.
 -   **Task Engine**: Powered by **Celery** and **Redis**, handling asynchronous malware scanning, update processing, and deployment scheduling.
--   **Database**: SQLite by default (production-ready via `production_server.bat`), with built-in support for PostgreSQL migration.
+-   **Database**: SQLite by default (production-ready via `server-manager\production_server.bat`), with built-in support for PostgreSQL migration.
 
 ---
 
@@ -88,7 +88,7 @@ Kinetix maintains a deep inventory of every device:
 
 Kinetix provides a dedicated **Server Manager GUI** for centralized administration of the Command Center environment.
 
--   **Location**: `server_manager/start_manager.bat`
+-   **Location**: `server-manager/start_manager.bat`
 -   **Capabilities**:
     -   **Service Control**: One-click start/stop for Redis and the Production Web Server.
     -   **Build Automation**: Trigger the MSI builder for updated agents.
@@ -122,13 +122,13 @@ The Command Center dashboard is optimized for real-time visibility without page 
 ### Quick Reset
 To completely clear the environment and start from scratch:
 ```cmd
-clean.bat
+server-manager\clean.bat
 ```
 
 ### Production Start
 To launch the system in a production-hardened state:
 ```cmd
-production_server.bat
+server-manager\production_server.bat
 ```
 This script handles dependency checks, port clearing, database migrations, and static file collection automatically.
 
