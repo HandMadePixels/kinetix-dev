@@ -94,7 +94,9 @@ class AgentUpdater:
                 'application/x-ms-dos-executable',
                 'application/vnd.microsoft.portable-executable',
                 'application/zip',
-                'application/x-zip-compressed'
+                'application/x-zip-compressed',
+                'application/CDFV2',
+                'application/x-ole-storage'
             ]
             
             if mime_type in allowed_mimes:
@@ -161,12 +163,11 @@ class AgentUpdater:
                 # /quiet : no UI
                 # /norestart : don't reboot the machine
                 # ALLUSERS=1 : per-machine install
-                # ALLUSERS=1 : per-machine install
                 cmd = [
-                    'msiexec', '/i', f'"{target_msi}"', 
+                    'msiexec', '/i', target_msi, 
                     '/quiet', '/norestart', 
                     'ALLUSERS=1',
-                    f'/L*V', f'"{log_file}"'
+                    '/L*V', log_file
                 ]
                 if args:
                     cmd.extend(args.split())
@@ -180,7 +181,7 @@ class AgentUpdater:
                 if os.name == 'nt':
                     creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008 # DETACHED_PROCESS
                 
-                subprocess.Popen(' '.join(cmd), shell=True, close_fds=True, creationflags=creation_flags)
+                subprocess.Popen(cmd, shell=False, close_fds=True, creationflags=creation_flags)
                 return True
 
             elif ext == '.exe':
@@ -188,7 +189,8 @@ class AgentUpdater:
                 if args:
                     cmd.extend(args.split())
                 agent_log.info(f"Executing EXE install: {' '.join(cmd)}")
-                result = subprocess.run(cmd, shell=False, capture_output=True, text=True)
+                # Use CREATE_NO_WINDOW (0x08000000) to prevent window flash
+                result = subprocess.run(cmd, shell=False, capture_output=True, text=True, creationflags=0x08000000)
                 return result.returncode == 0
             else:
                 agent_log.error(f"Unsupported file extension: {ext}")

@@ -1,9 +1,9 @@
 @echo off
 cd /d "%~dp0.."
 if not exist "venv\Scripts\activate.bat" (
-    echo Virtual environment not found. Please run quickstart.bat first.
-    pause
-    exit /b 1
+    echo [WARNING] Virtual environment not found. Launching manager with system Python...
+    python server-manager\manager_gui.py
+    exit /b %errorlevel%
 )
 call venv\Scripts\activate.bat
 python server-manager\manager_gui.py

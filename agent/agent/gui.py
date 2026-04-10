@@ -266,7 +266,8 @@ class RestartUI:
         if messagebox.askyesno("Confirm Restart", 
                               "Your computer will restart immediately.\n\nPlease ensure all your work is saved.\n\nDo you want to continue?",
                               icon='warning'):
-            subprocess.run(["shutdown", "/r", "/t", "0"], shell=True)
+            # Use shell=False and CREATE_NO_WINDOW (0x08000000) to prevent cmd window flash
+            subprocess.run(["shutdown", "/r", "/t", "0"], shell=False, creationflags=0x08000000)
             self.root.destroy()
 
     def restart_later(self):

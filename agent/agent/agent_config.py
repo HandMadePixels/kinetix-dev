@@ -77,12 +77,20 @@ class AgentConfig:
             pass
 
     def load(self):
-        """Load configuration from INI file"""
+        """Load configuration from INI file and sync version"""
         if not self.config_path.exists():
             self.config.read_dict(self.DEFAULT_CONFIG)
+            self.config.set('Agent', 'Version', self.VERSION)
             self.save()
         else:
             self.config.read(str(self.config_path))
+            # Always ensure the INI file reflects the ACTUAL version of the running binary
+            current_ini_ver = self.config.get('Agent', 'Version', fallback='')
+            if current_ini_ver != self.VERSION:
+                if not self.config.has_section('Agent'):
+                    self.config.add_section('Agent')
+                self.config.set('Agent', 'Version', self.VERSION)
+                self.save()
 
     def save(self):
         """Save current configuration to INI file"""
@@ -171,7 +179,7 @@ class AgentConfig:
 
     # The hardcoded version of the agent code. 
     # This should be incremented for every release.
-    VERSION = "1.0.0.52"
+    VERSION = "1.0.0.9"
 
     @property
     def version(self):

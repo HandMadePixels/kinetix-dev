@@ -69,24 +69,16 @@ if errorlevel 1 (
 echo [OK] Dependencies installed
 echo.
 
-REM Create .env file if it doesn't exist
+REM Create and verify .env file
 echo [5/10] Setting up environment configuration...
-if exist ".env" (
-    echo [OK] .env file already exists
-) else (
-    echo Creating .env file from template...
-    copy .env.example .env >nul
-    
-    REM Generate SECRET_KEY
-    echo Generating SECRET_KEY...
-    python -c "from django.core.management.utils import get_random_secret_key; print('SECRET_KEY=' + get_random_secret_key())" >> .env
-    
-    REM Generate ENCRYPTION_KEY
-    echo Generating ENCRYPTION_KEY...
-    python -c "from cryptography.fernet import Fernet; print('ENCRYPTION_KEY=' + Fernet.generate_key().decode())" >> .env
-    
-    echo [OK] .env file created with generated keys
+python server-manager\ensure_keys.py
+if errorlevel 1 (
+    echo [ERROR] Failed to set up environment keys
+    pause
+    exit /b 1
 )
+echo [OK] Environment configuration verified
+
 echo.
 
 REM Create necessary directories

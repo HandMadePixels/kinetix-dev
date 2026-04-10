@@ -354,7 +354,9 @@ class UpdateUploadSerializer(serializers.Serializer):
                 'application/x-ms-dos-executable',
                 'application/vnd.microsoft.portable-executable',
                 'application/zip',
-                'application/x-zip-compressed'
+                'application/x-zip-compressed',
+                'application/CDFV2',
+                'application/x-ole-storage'
             ]
             
             if mime_type not in allowed_mimes:

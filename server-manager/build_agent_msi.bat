@@ -54,6 +54,18 @@ powershell -Command "(Get-Content '%~dp0..\agent\agent\agent_config.py') -replac
 REM 1. Move to agent directory
 cd /d "%~dp0..\agent\agent"
 
+REM NEW: Ensure agent is not running so it doesn't lock the EXE
+echo [0/3] Stopping existing agent processes...
+taskkill /F /IM kinetix_agent.exe /T >nul 2>&1
+net stop KinetixAgent >nul 2>&1
+
+REM NEW: Recovery check for previous failed builds
+if exist "..\dist\kinetix_agent_main.exe" (
+    echo [FIX] Recovering binary from previous failed build...
+    if not exist "..\dist\kinetix_agent" mkdir "..\dist\kinetix_agent"
+    move /y "..\dist\kinetix_agent_main.exe" "..\dist\kinetix_agent\kinetix_agent.exe" >nul
+)
+
 REM 2. Build the Executable (cc_agent.exe)
 echo [1/3] Building Agent Executable...
 call ..\..\server-manager\agent_build.bat
@@ -96,16 +108,23 @@ echo [3/3] Compiling MSI with WiX...
 cd installer
 
 echo Running Heat to harvest dependencies...
-REM Move the main EXE out temporarily so Heat doesn't harvest it (we handle it manually in product.wxs for the Service)
-move /y "..\dist\kinetix_agent\kinetix_agent.exe" "..\dist\kinetix_agent_main.exe" >nul
+REM Copy the main EXE out temporarily so Heat doesn't harvest it (we handle it manually in product.wxs for the Service)
+copy /y "..\dist\kinetix_agent\kinetix_agent.exe" "..\dist\kinetix_agent_main.exe" >nul
+
+REM NEW: Try to remove it from the harvest folder (this is where it often locks)
+del /f /q "..\dist\kinetix_agent\kinetix_agent.exe" >nul
 
 "!WIX_PATH!heat.exe" dir "..\dist\kinetix_agent" -cg AgentFiles -dr INSTALLFOLDER -srd -sreg -sfrag -ke -ag -out generated_files.wxs
 
-REM Give Windows a moment to release handles if Heat was slow
-timeout /t 2 /nobreak >nul
+REM Give Windows/Antivirus a longer moment to release handles
+timeout /t 5 /nobreak >nul
 
-REM Move it back so product.wxs can find it at the expected path
-move /y "..\dist\kinetix_agent_main.exe" "..\dist\kinetix_agent\kinetix_agent.exe" >nul
+echo Restoring main executable...
+REM Copy it back so product.wxs can find it at the expected path
+copy /y "..\dist\kinetix_agent_main.exe" "..\dist\kinetix_agent\kinetix_agent.exe" >nul
+
+REM Clean up the temp copy
+if exist "..\dist\kinetix_agent\kinetix_agent.exe" del /f /q "..\dist\kinetix_agent_main.exe" >nul
 
 echo Running Candle...
 "!WIX_PATH!candle.exe" -ext WixUtilExtension product.wxs generated_files.wxs

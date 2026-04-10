@@ -17,11 +17,35 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 # CSRF Trusted Origins
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
-    'http://192.168.1.7:8000',
-]
+CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='http://localhost:8000,http://127.0.0.1:8000', cast=Csv())
+
+# Normalize: Django 4.0+ requires every entry to start with a scheme (http:// or https://).
+# Auto-prefix bare hostnames/IPs read from .env so the server doesn't refuse to start.
+def _normalize_csrf_origin(origin: str) -> str:
+    origin = origin.strip()
+    if origin and not origin.startswith(('http://', 'https://')):
+        # Bare host or IP — default to http, append port 8000 if no port given
+        if ':' in origin:  # e.g. "127.0.0.1:8000" — already has port
+            return f"http://{origin}"
+        return f"http://{origin}:8000"
+    return origin
+
+CSRF_TRUSTED_ORIGINS = [_normalize_csrf_origin(o) for o in CSRF_TRUSTED_ORIGINS if o]
+
+# If ALLOWED_HOSTS has custom IPs, ensure they are also in CSRF_TRUSTED_ORIGINS if not already there
+_extra_origins = []
+for host in ALLOWED_HOSTS:
+    if host not in ['*', 'localhost', '127.0.0.1']:
+        # Add both http and https variants with common ports if not specified
+        if ':' not in host:
+            _extra_origins.append(f"http://{host}:8000")
+            _extra_origins.append(f"http://{host}")
+        else:
+            _extra_origins.append(f"http://{host}")
+
+for origin in _extra_origins:
+    if origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(origin)
 
 # Application definition
 INSTALLED_APPS = [

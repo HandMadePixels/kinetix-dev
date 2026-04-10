@@ -1,6 +1,6 @@
 # Windows Agent Requirements
-requests==2.31.0
-cryptography==42.0.0
+requests==2.32.2
+cryptography==46.0.6
 pywin32==306
 jsonschema==4.20.0
 keyring==24.3.0

@@ -63,7 +63,10 @@ if "%TIER%"=="2" (
 
 echo.
 echo [2/7] Stopping services...
-taskkill /FI "WINDOWTITLE eq Kinetix*" /T /F >nul 2>&1
+REM Only kill windows starting with 'Kinetix - ' (services), avoiding the Manager or IDEs
+taskkill /FI "WINDOWTITLE eq Kinetix - *" /T /F >nul 2>&1
+taskkill /IM celery.exe /F >nul 2>&1
+taskkill /IM waitress-serve.exe /F >nul 2>&1
 echo [OK] Services stopped.
 
 echo.

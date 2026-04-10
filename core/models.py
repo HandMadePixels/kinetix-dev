@@ -266,18 +266,31 @@ class SystemConfig(models.Model):
         """Ensure only one instance exists and handle agent MSI hashing"""
         self.pk = 1
         
-        # Auto-compute hash if MSI file is changed
+        # Auto-compute hash and potentially sync version if MSI file is provided
         if self.agent_msi_file:
             try:
                 import hashlib
+                import re
+                
+                # 1. Update SHA256 Hash
                 hasher = hashlib.sha256()
-                # If it's a new file object, hash it
+                # If it's a new file object (being uploaded), hash it
                 if hasattr(self.agent_msi_file, 'file'):
                     for chunk in self.agent_msi_file.chunks():
                         hasher.update(chunk)
                     self.agent_msi_sha256 = hasher.hexdigest()
+                
+                # 2. AUTO-VERSION DETECTION: 
+                # Extract version from filename pattern: kinetix_agent_1.2.3.4.msi
+                filename = self.agent_msi_file.name
+                match = re.search(r'kinetix_agent_(\d+\.\d+\.\d+\.\d+)', filename)
+                if match:
+                    detected_version = match.group(1)
+                    # Only update if current is older or we are in a re-upload scenario
+                    self.latest_agent_version = detected_version
+                    
             except Exception as e:
-                print(f"Error hashing agent MSI: {e}")
+                print(f"Error processing agent MSI: {e}")
 
         super().save(*args, **kwargs)
     

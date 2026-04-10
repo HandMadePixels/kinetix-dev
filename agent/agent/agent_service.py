@@ -9,6 +9,7 @@ import threading
 import time
 import subprocess
 import json
+import shlex
 
 from agent_logger import agent_log
 from agent_config import AgentConfig
@@ -203,7 +204,8 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
         if not self.running:
             return
 
-        agent_log.info("Service process terminating gracefully for update...")
+        agent_log.info("Service process terminating gracefully for update in 3s...")
+        time.sleep(3) # Final grace period for installer stability
         try:
             self.ReportServiceStatus(win32service.SERVICE_STOPPED)
         except:
@@ -362,9 +364,13 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
 
                 agent_log.info(f"Executing adjusted command: {adjusted_cmd}")
                 
+                # SECURITY: Split command into arguments and run without shell=True
+                # Using shlex.split with posix=False for better Windows compatibility
+                args = shlex.split(adjusted_cmd, posix=False)
+                
                 process = subprocess.run(
-                    adjusted_cmd, 
-                    shell=True, 
+                    args, 
+                    shell=False, 
                     capture_output=True, 
                     text=True, 
                     timeout=300
@@ -536,6 +542,8 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 # If direct execution fails, try fallback but log it
                 agent_log.warning(f"Direct execution failed, fallback to shell for compat: {e}")
                 try:
+                    # Fallback to shell ONLY if explicitly required, but still use list if possible
+                    # (Note: In this specific fallback case, if direct execution failed, we try shell)
                     process = subprocess.run(command_to_run, shell=True, capture_output=True, text=True, timeout=60)
                     status = 'completed' if process.returncode == 0 else 'failed'
                     result = process.stdout if process.returncode == 0 else process.stderr
@@ -567,7 +575,9 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 if not os.path.exists(public_temp):
                     os.makedirs(public_temp)
                     # Ensure the interactive user can actually see/run things in this folder
-                    subprocess.run(f'icacls "{public_temp}" /grant Everyone:(OI)(CI)F /T', shell=True, capture_output=True)
+                    # Use list and CREATE_NO_WINDOW (0x08000000) for icacls
+                    subprocess.run(['icacls', public_temp, '/grant', 'Everyone:(OI)(CI)F', '/T'], 
+                                   shell=False, capture_output=True, creationflags=0x08000000)
                 
                 temp_bat = os.path.join(public_temp, f"reboot_{int(time.time())}.bat")
                 temp_log = temp_bat + ".log"
@@ -582,7 +592,9 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                     f.write(f"del \"%~f0\" & exit\n")
 
                 # Ensure the batch file itself is accessible/executable by Everyone
-                subprocess.run(f'icacls "{temp_bat}" /grant Everyone:F /T', shell=True, capture_output=True)
+                # Use list and CREATE_NO_WINDOW (0x08000000) for icacls
+                subprocess.run(['icacls', temp_bat, '/grant', 'Everyone:F', '/T'], 
+                               shell=False, capture_output=True, creationflags=0x08000000)
 
                 # To bypass Session 0 isolation, we use schtasks to run the process in the interactive session.
                 # Use a shorter, cleaner task name
@@ -593,10 +605,16 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 # Use cmd.exe /c to launch the batch file. This is more robust than relying on file associations
                 # directly in the task scheduler, especially across different OS versions.
                 # Quoting: /tr "cmd.exe /c \"path_to_bat\""
-                full_task_cmd = f'schtasks /create /tn "{task_name}" /tr "cmd.exe /c \\"{temp_bat}\\"" /sc once /st 00:00 /sd 01/01/2099 /ru "INTERACTIVE" /it /f /rl highest'
-                agent_log.info(f"Creating interactive task: {full_task_cmd}")
+                # Using list for schtasks to avoid shell=True
+                create_args = [
+                    'schtasks', '/create', '/tn', task_name,
+                    '/tr', f'cmd.exe /c "{temp_bat}"',
+                    '/sc', 'once', '/st', '00:00', '/sd', '01/01/2099',
+                    '/ru', 'INTERACTIVE', '/it', '/f', '/rl', 'highest'
+                ]
+                agent_log.info(f"Creating interactive task: {' '.join(create_args)}")
                 
-                create_res = subprocess.run(full_task_cmd, shell=True, capture_output=True, text=True)
+                create_res = subprocess.run(create_args, shell=False, capture_output=True, text=True, creationflags=0x08000000)
                 if create_res.returncode != 0:
                     agent_log.error(f"Task creation failed: {create_res.stdout} {create_res.stderr}")
                     # KEEPING THE BAT FILE FOR DEBUGGING
@@ -606,7 +624,9 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 time.sleep(1)
                     
                 # Trigger the task immediately
-                run_res = subprocess.run(f'schtasks /run /tn "{task_name}"', shell=True, capture_output=True, text=True)
+                # Use list for schtasks run
+                run_res = subprocess.run(['schtasks', '/run', '/tn', task_name], 
+                                         shell=False, capture_output=True, text=True, creationflags=0x08000000)
                 if run_res.returncode != 0:
                     agent_log.error(f"Task run failed: {run_res.stdout} {run_res.stderr}")
                     # KEEPING THE BAT FILE FOR DEBUGGING
@@ -615,7 +635,9 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 agent_log.info("Reboot UI task triggered successfully.")
                 
                 # Cleanup the task after 5 minutes (instead of 60s) to give it room to breathe
-                threading.Timer(300, lambda: subprocess.run(f'schtasks /delete /tn "{task_name}" /f', shell=True, capture_output=True)).start()
+                # Use list for schtasks delete
+                threading.Timer(300, lambda: subprocess.run(['schtasks', '/delete', '/tn', task_name, '/f'], 
+                                                            shell=False, capture_output=True, creationflags=0x08000000)).start()
 
                 self.client.send_command_status(command_id, 'completed', "Interactive UI triggered via scheduled task batch wrapper")
                 agent_log.info("Triggered reboot UI via scheduled task batch wrapper")
@@ -634,7 +656,9 @@ class KinetixAgentService(win32serviceutil.ServiceFramework):
                 # Use sc instead of net for better service control compatibility
                 # We add a short delay to ensure the status message is fully sent
                 restart_cmd = 'timeout /t 3 /nobreak && sc stop KinetixAgent && timeout /t 2 /nobreak && sc start KinetixAgent'
-                subprocess.Popen(f'cmd /c "{restart_cmd}"', shell=True)
+                # Chained commands are tricky without shell, but we can use cmd /c with a list
+                restart_cmd_list = ['cmd', '/c', f'timeout /t 3 /nobreak && sc stop KinetixAgent && timeout /t 2 /nobreak && sc start KinetixAgent']
+                subprocess.Popen(restart_cmd_list, shell=False, creationflags=0x08000000)
                 
                 agent_log.info("Restart command dispatched to external process")
             except Exception as e:

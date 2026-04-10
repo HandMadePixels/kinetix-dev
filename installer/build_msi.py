@@ -38,10 +38,12 @@ def print_warning(message):
 def run_command(cmd, cwd=None):
     """Run shell command and return success status"""
     try:
+        import shlex
+        args = shlex.split(cmd, posix=False)
         result = subprocess.run(
-            cmd,
+            args,
             cwd=cwd,
-            shell=True,
+            shell=False,
             check=True,
             capture_output=True,
             text=True
